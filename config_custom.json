@@ -211,5 +211,11 @@
         }
       }
     }
+  },
+  "schedule": {
+    "post_interval_minutes": 30,
+    "first_post_hour": 0,
+    "last_post_hour": 24,
+    "daily_restart_time": "00:00"
   }
 }

@@ -59,7 +59,9 @@ for path in PATHS.values():
 # ============================================
 
 log_file = PATHS["logs"] / f"telbot_{datetime.now().strftime('%Y%m%d')}.log"
+error_log_file = PATHS["logs"] / f"errors_{datetime.now().strftime('%Y%m%d')}.log"
 
+# Основной логгер
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -70,6 +72,22 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Отдельный логгер для ошибок
+error_logger = logging.getLogger('errors')
+error_logger.setLevel(logging.ERROR)
+error_handler = logging.FileHandler(error_log_file, encoding='utf-8')
+error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+error_logger.addHandler(error_handler)
+
+def log_error(message: str, exc: Exception = None):
+    """Логирует ошибку в оба лога"""
+    full_message = f"{message}" + (f" | Exception: {exc}" if exc else "")
+    logger.error(full_message)
+    error_logger.error(full_message)
+    if exc:
+        import traceback
+        error_logger.error(traceback.format_exc())
 
 # ============================================
 # ЗАГРУЗКА КОНФИГУРАЦИИ
@@ -210,39 +228,67 @@ def admin_only(func):
 # ============================================
 
 def get_content_stats() -> Dict:
-    """Собирает статистику по контенту из месячных папок"""
+    """Собирает статистику по контенту
+    
+    Показывает контент только из:
+    1. Папки текущего месяца: content/YYYY-MM/channel_key/category/
+    2. Папки предыдущего месяца (если есть)
+    """
     stats = {
         "total_images": 0,
         "channels": {},
-        "by_channel": {}
+        "by_channel": {},
+        "current_month": "",
+        "prev_month": ""
     }
     
     content_path = PATHS["content"]
     if not content_path.exists():
         return stats
     
-    # Ищем месячные папки (YYYY-MM)
-    month_folders = [d for d in content_path.iterdir() 
-                    if d.is_dir() and re.match(r'\d{4}-\d{2}', d.name)]
+    supported_formats = CONFIG.get("supported_formats") or CONFIG.get("settings", {}).get("supported_formats", [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm"])
+    
+    # Получаем текущий и предыдущий месяц
+    now = datetime.now()
+    current_month = now.strftime("%Y-%m")
+    if now.month == 1:
+        prev_month = f"{now.year - 1}-12"
+    else:
+        prev_month = f"{now.year}-{now.month - 1:02d}"
+    
+    stats["current_month"] = current_month
+    stats["prev_month"] = prev_month
     
     enabled_channels = get_enabled_channels()
+    
+    def count_files_in_dir(dir_path: Path) -> int:
+        """Считает файлы поддерживаемых форматов в папке"""
+        if not dir_path.exists():
+            return 0
+        return sum(1 for f in dir_path.iterdir() 
+                   if f.is_file() and f.suffix.lower() in supported_formats)
+    
+    def scan_channel_path(channel_path: Path, channel_stats: dict):
+        """Сканирует папку канала и обновляет статистику"""
+        if not channel_path.exists():
+            return
+        for cat_dir in channel_path.iterdir():
+            if cat_dir.is_dir():
+                count = count_files_in_dir(cat_dir)
+                if cat_dir.name not in channel_stats["categories"]:
+                    channel_stats["categories"][cat_dir.name] = 0
+                channel_stats["categories"][cat_dir.name] += count
+                channel_stats["total"] += count
     
     for channel_key, channel_config in enabled_channels.items():
         channel_stats = {"total": 0, "categories": {}}
         
-        # Собираем контент из всех месяцев
-        for month_folder in month_folders:
-            channel_path = month_folder / channel_key
-            if channel_path.exists():
-                for cat_dir in channel_path.iterdir():
-                    if cat_dir.is_dir():
-                        supported_formats = CONFIG.get("supported_formats") or CONFIG.get("settings", {}).get("supported_formats", [".jpg", ".jpeg", ".png", ".gif", ".webp"])
-                        count = sum(1 for f in cat_dir.iterdir() 
-                                   if f.suffix.lower() in supported_formats)
-                        if cat_dir.name not in channel_stats["categories"]:
-                            channel_stats["categories"][cat_dir.name] = 0
-                        channel_stats["categories"][cat_dir.name] += count
-                        channel_stats["total"] += count
+        # Собираем контент только из текущего и предыдущего месяца
+        current_month_path = content_path / current_month / channel_key
+        prev_month_path = content_path / prev_month / channel_key
+        
+        scan_channel_path(current_month_path, channel_stats)
+        scan_channel_path(prev_month_path, channel_stats)
         
         stats["channels"][channel_key] = channel_stats
         stats["total_images"] += channel_stats["total"]
@@ -424,45 +470,103 @@ class TelegramPoster:
         return channel_key
     
     def get_random_image(self, channel_key: str) -> Optional[Dict]:
-        """Выбирает случайное изображение из контента канала (из месячных папок)"""
-        # Ищем в месячных папках (YYYY-MM)
-        month_folders = [d for d in self.content_path.iterdir() 
-                        if d.is_dir() and re.match(r'\d{4}-\d{2}', d.name)]
+        """Выбирает случайное изображение из контента канала
         
-        if not month_folders:
-            logger.warning(f"Нет месячных папок в {self.content_path}")
-            return None
-        
+        Приоритет поиска:
+        1. Папка текущего месяца: content/YYYY-MM/channel_key/category/
+        2. Папка предыдущего месяца (если текущая пустая)
+        3. Пустые папки месяцев автоматически удаляются
+        """
         all_images = []
-        channel_config = CONFIG["channels"][channel_key]
+        channel_config = CONFIG["channels"].get(channel_key, {})
+        supported_formats = CONFIG.get("supported_formats") or CONFIG.get("settings", {}).get("supported_formats", [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm"])
         
-        # Перебираем все месячные папки
-        for month_folder in month_folders:
-            channel_content = month_folder / channel_key
-            if not channel_content.exists():
-                continue
-                
-            for cat_path in channel_content.iterdir():
+        def find_hashtags_for_category(cat_name: str) -> list:
+            """Находит хештеги для категории"""
+            for cat_cfg in channel_config.get("categories", {}).values():
+                if cat_cfg.get("folder_name") == cat_name:
+                    return cat_cfg.get("hashtags", [])[:1]
+            return []
+        
+        def scan_channel_folder(channel_path: Path) -> list:
+            """Сканирует папку канала на наличие изображений"""
+            images = []
+            if not channel_path.exists():
+                return images
+            
+            for cat_path in channel_path.iterdir():
                 if cat_path.is_dir():
                     for img_path in cat_path.iterdir():
-                        supported_formats = CONFIG.get("supported_formats") or CONFIG.get("settings", {}).get("supported_formats", [".jpg", ".jpeg", ".png", ".gif", ".webp"])
-                        if img_path.suffix.lower() in supported_formats:
-                            # Находим хештеги для категории
-                            hashtags = []
-                            for cat_cfg in channel_config.get("categories", {}).values():
-                                if cat_cfg.get("folder_name") == cat_path.name:
-                                    hashtags = cat_cfg.get("hashtags", [])[:1]  # Первый хештег
-                                    break
-                            
-                            all_images.append({
+                        if img_path.is_file() and img_path.suffix.lower() in supported_formats:
+                            images.append({
                                 "path": img_path,
                                 "category": cat_path.name,
-                                "hashtags": hashtags
+                                "hashtags": find_hashtags_for_category(cat_path.name)
                             })
+            return images
+        
+        def cleanup_empty_month_folder(month_folder: Path):
+            """Удаляет пустую месячную папку"""
+            try:
+                if month_folder.exists():
+                    # Проверяем, есть ли файлы в папке (рекурсивно)
+                    has_files = False
+                    for item in month_folder.rglob('*'):
+                        if item.is_file():
+                            has_files = True
+                            break
+                    
+                    if not has_files:
+                        shutil.rmtree(month_folder)
+                        logger.info(f"🗑️ Удалена пустая папка месяца: {month_folder.name}")
+            except Exception as e:
+                log_error(f"Ошибка при удалении пустой папки {month_folder}", e)
+        
+        # Получаем текущий и предыдущий месяц
+        now = datetime.now()
+        current_month = now.strftime("%Y-%m")
+        
+        # Вычисляем предыдущий месяц
+        if now.month == 1:
+            prev_month = f"{now.year - 1}-12"
+        else:
+            prev_month = f"{now.year}-{now.month - 1:02d}"
+        
+        # 1. Сначала ищем в папке текущего месяца
+        current_month_path = self.content_path / current_month
+        if current_month_path.exists():
+            channel_path = current_month_path / channel_key
+            all_images = scan_channel_folder(channel_path)
+            
+            if all_images:
+                logger.info(f"📂 Найдено {len(all_images)} изображений в {current_month}/{channel_key}")
+        
+        # 2. Если в текущем месяце нет - ищем в предыдущем
+        if not all_images:
+            prev_month_path = self.content_path / prev_month
+            if prev_month_path.exists():
+                channel_path = prev_month_path / channel_key
+                all_images = scan_channel_folder(channel_path)
+                
+                if all_images:
+                    logger.info(f"📂 Найдено {len(all_images)} изображений в {prev_month}/{channel_key}")
+            
+            # Проверяем и удаляем пустую папку текущего месяца
+            if current_month_path.exists():
+                cleanup_empty_month_folder(current_month_path)
+        
+        # 3. Проверяем пустые месячные папки и удаляем их
+        month_folders = [d for d in self.content_path.iterdir() 
+                        if d.is_dir() and re.match(r'\d{4}-\d{2}', d.name)]
+        for month_folder in month_folders:
+            if month_folder.name not in [current_month, prev_month]:
+                cleanup_empty_month_folder(month_folder)
         
         if not all_images:
+            log_error(f"Нет изображений для канала {channel_key}. Проверьте структуру: content/{current_month}/{channel_key}/категория/файлы")
             return None
         
+        logger.info(f"📂 Найдено {len(all_images)} изображений для канала {channel_key}")
         return random.choice(all_images)
     
     async def post_image(self, channel_id: str, image_path: Path, caption: str = "") -> bool:
@@ -471,11 +575,15 @@ class TelegramPoster:
             from telegram import Bot
             bot = Bot(token=self.bot_token)
             
+            if not image_path.exists():
+                log_error(f"Файл не существует: {image_path}")
+                return False
+            
             suffix = image_path.suffix.lower()
             with open(image_path, "rb") as f:
                 if suffix == ".gif":
                     await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
-                elif suffix in [".mp4", ".mov", ".avi", ".mkv"]:
+                elif suffix in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
                     await bot.send_video(chat_id=channel_id, video=f, caption=caption)
                 else:
                     await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
@@ -483,75 +591,108 @@ class TelegramPoster:
             logger.info(f"📤 Отправлено в {channel_id}: {image_path.name}")
             return True
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки: {e}")
+            log_error(f"Ошибка отправки в {channel_id}: {image_path.name}", e)
             return False
     
     async def post_and_delete(self, channel_key: str) -> bool:
         """Публикует изображение и удаляет его"""
-        channel_config = CONFIG["channels"][channel_key]
+        channel_config = CONFIG["channels"].get(channel_key)
+        if not channel_config:
+            log_error(f"Канал {channel_key} не найден в конфигурации")
+            return False
+            
         channel_id = channel_config["channel_id"]
         
         # Получаем случайное изображение
         img_info = self.get_random_image(channel_key)
         if not img_info:
-            logger.warning(f"⚠️ Нет изображений для канала {channel_key}")
+            log_error(f"Нет изображений для канала {channel_key}")
             return False
+        
+        image_path = img_info["path"]
+        logger.info(f"📷 Выбрано изображение: {image_path}")
         
         # Формируем подпись
         caption = " ".join(img_info["hashtags"]) if img_info["hashtags"] else ""
         
         # Отправляем
-        success = await self.post_image(channel_id, img_info["path"], caption)
+        success = await self.post_image(channel_id, image_path, caption)
         
         if success:
             # Удаляем опубликованное изображение
             try:
-                img_info["path"].unlink()
-                logger.info(f"🗑️ Удалено: {img_info['path'].name}")
+                if image_path.exists():
+                    image_path.unlink()
+                    logger.info(f"🗑️ Успешно удалено: {image_path.name}")
+                else:
+                    log_error(f"Файл уже не существует при попытке удаления: {image_path}")
+            except PermissionError as e:
+                log_error(f"Нет прав на удаление файла: {image_path}", e)
             except Exception as e:
-                logger.error(f"❌ Ошибка удаления: {e}")
+                log_error(f"Ошибка удаления файла: {image_path}", e)
             
             # Запоминаем время последнего поста
             self.last_post_time = datetime.now()
             self._save_state()
+        else:
+            log_error(f"Не удалось опубликовать в {channel_key}: {image_path}")
         
         return success
     
     async def run_posting_cycle(self, bot_instance=None, admin_ids=None):
-        """Запускает цикл автоматического постинга"""
+        """Запускает цикл автоматического постинга
+        
+        Логика: 1 пост в 1 канал -> таймер -> 1 пост в следующий канал -> таймер -> ...
+        """
         self.is_posting = True
         self._save_state()
         
         logger.info("🚀 Запущен цикл автопостинга")
         
-        interval_minutes = CONFIG["schedule"].get("post_interval_minutes", 30)
-        first_hour = CONFIG["schedule"].get("first_post_hour", 0)
-        last_hour = CONFIG["schedule"].get("last_post_hour", 24)
+        # Безопасное получение настроек из конфига
+        schedule = CONFIG.get("schedule", {})
+        interval_minutes = schedule.get("post_interval_minutes", 30)
+        first_hour = schedule.get("first_post_hour", 0)
+        last_hour = schedule.get("last_post_hour", 24)
+        
+        logger.info(f"📋 Настройки: интервал {interval_minutes} мин, активное время {first_hour}:00-{last_hour}:00")
         
         while self.is_posting:
-            now = datetime.now()
-            
-            # Проверяем активное время (если задано)
-            if first_hour <= now.hour < last_hour:
-                channel_key = self.get_next_channel()
+            try:
+                now = datetime.now()
                 
-                if channel_key:
-                    logger.info(f"⏰ Постинг в канал: {channel_key}")
-                    success = await self.post_and_delete(channel_key)
+                # Проверяем активное время (если задано)
+                if first_hour <= now.hour < last_hour:
+                    channel_key = self.get_next_channel()
                     
-                    if not success and bot_instance and admin_ids:
-                        for admin_id in admin_ids:
-                            try:
-                                await bot_instance.send_message(
-                                    chat_id=admin_id,
-                                    text=f"⚠️ Не удалось опубликовать пост в {channel_key}\nВозможно, закончился контент."
-                                )
-                            except:
-                                pass
-            else:
-                logger.debug(f"💤 Вне активного времени ({first_hour}:00-{last_hour}:00)")
-            
-            await asyncio.sleep(interval_minutes * 60)
+                    if channel_key:
+                        channel_name = CONFIG["channels"].get(channel_key, {}).get("name", channel_key)
+                        logger.info(f"⏰ Постинг в канал: {channel_name} ({channel_key})")
+                        
+                        success = await self.post_and_delete(channel_key)
+                        
+                        if success:
+                            logger.info(f"✅ Успешно опубликовано в {channel_name}. Следующий пост через {interval_minutes} мин.")
+                        elif bot_instance and admin_ids:
+                            for admin_id in admin_ids:
+                                try:
+                                    await bot_instance.send_message(
+                                        chat_id=admin_id,
+                                        text=f"⚠️ Не удалось опубликовать пост в {channel_name}\nВозможно, закончился контент."
+                                    )
+                                except Exception as e:
+                                    log_error(f"Не удалось отправить уведомление админу {admin_id}", e)
+                    else:
+                        log_error("Нет доступных каналов для постинга")
+                else:
+                    logger.debug(f"💤 Вне активного времени ({first_hour}:00-{last_hour}:00)")
+                
+                # Ждём указанный интервал перед следующим постом
+                await asyncio.sleep(interval_minutes * 60)
+                
+            except Exception as e:
+                log_error("Ошибка в цикле постинга", e)
+                await asyncio.sleep(60)  # Подождать минуту при ошибке
         
         logger.info("⏹️ Цикл постинга остановлен")
     
@@ -694,10 +835,11 @@ async def cmd_posting_start(update, context):
         await update.message.reply_text("⚠️ Постинг уже запущен")
         return
     
+    admin_ids = CONFIG.get("telegram", {}).get("admin_ids", [])
     posting_task = asyncio.create_task(
         poster.run_posting_cycle(
             bot_instance=context.bot,
-            admin_ids=CONFIG["telegram"]["admin_ids"]
+            admin_ids=admin_ids
         )
     )
     
@@ -838,74 +980,91 @@ def main():
     logger.info("✅ Бот готов к работе")
     logger.info(f"📁 Папка контента: {PATHS['content']}")
     
+    # Безопасное получение admin_ids
+    def get_admin_ids():
+        """Безопасно получает список admin_ids"""
+        telegram_config = CONFIG.get("telegram", {})
+        return telegram_config.get("admin_ids", [])
+    
     # Автозапуск постинга по умолчанию
     async def delayed_start_posting(application):
         """Отложенный запуск постинга"""
-        await asyncio.sleep(5)
-        
-        # Проверяем, не запущен ли уже постинг
-        if not poster.is_posting:
-            logger.info("🚀 Автоматический запуск постинга...")
-            asyncio.create_task(
-                poster.run_posting_cycle(
-                    bot_instance=application.bot,
-                    admin_ids=CONFIG["telegram"]["admin_ids"]
+        try:
+            await asyncio.sleep(5)
+            
+            # Проверяем, не запущен ли уже постинг
+            if not poster.is_posting:
+                logger.info("🚀 Автоматический запуск постинга...")
+                asyncio.create_task(
+                    poster.run_posting_cycle(
+                        bot_instance=application.bot,
+                        admin_ids=get_admin_ids()
+                    )
                 )
-            )
-        else:
-            logger.info("ℹ️ Постинг уже запущен, пропускаем автозапуск")
+            else:
+                logger.info("ℹ️ Постинг уже запущен, пропускаем автозапуск")
+        except Exception as e:
+            log_error("Ошибка при автозапуске постинга", e)
     
     async def post_init(application):
         """Инициализация после запуска бота"""
-        logger.info("🚀 Инициализация бота...")
-        logger.info(f"📊 Состояние постинга: {'активен' if poster.is_posting else 'остановлен'}")
-        
-        # Всегда пытаемся запустить автопостинг
-        asyncio.create_task(delayed_start_posting(application))
-        
-        # Запускаем задачу для перезапуска в полночь
-        asyncio.create_task(midnight_restart_loop(application))
+        try:
+            logger.info("🚀 Инициализация бота...")
+            logger.info(f"📊 Состояние постинга: {'активен' if poster.is_posting else 'остановлен'}")
+            
+            # Всегда пытаемся запустить автопостинг
+            asyncio.create_task(delayed_start_posting(application))
+            
+            # Запускаем задачу для перезапуска в полночь
+            asyncio.create_task(midnight_restart_loop(application))
+        except Exception as e:
+            log_error("Ошибка при инициализации бота", e)
     
     # Задача для автоматического перезапуска в 00:00
     async def midnight_restart_loop(application):
         """Перезапускает бот каждый день в 00:00"""
         while True:
-            now = datetime.now()
-            # Вычисляем время до следующей полуночи
-            next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
-            seconds_until_midnight = (next_midnight - now).total_seconds()
-            
-            logger.info(f"⏰ Следующий перезапуск в {next_midnight.strftime('%Y-%m-%d %H:%M:%S')}")
-            
-            await asyncio.sleep(seconds_until_midnight)
-            
-            logger.info("🔄 Полночь! Выполняю перезапуск...")
-            
-            # Останавливаем постинг
-            if poster.is_posting:
-                poster.stop_posting()
-            
-            # Отправляем уведомление админам
-            for admin_id in CONFIG["telegram"]["admin_ids"]:
-                try:
-                    await application.bot.send_message(
-                        chat_id=admin_id,
-                        text="🔄 Автоматический перезапуск бота (00:00)\nПостинг будет возобновлён через несколько секунд..."
+            try:
+                now = datetime.now()
+                # Вычисляем время до следующей полуночи
+                next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
+                seconds_until_midnight = (next_midnight - now).total_seconds()
+                
+                logger.info(f"⏰ Следующий перезапуск в {next_midnight.strftime('%Y-%m-%d %H:%M:%S')}")
+                
+                await asyncio.sleep(seconds_until_midnight)
+                
+                logger.info("🔄 Полночь! Выполняю перезапуск...")
+                
+                # Останавливаем постинг
+                if poster.is_posting:
+                    poster.stop_posting()
+                
+                # Отправляем уведомление админам
+                admin_ids = get_admin_ids()
+                for admin_id in admin_ids:
+                    try:
+                        await application.bot.send_message(
+                            chat_id=admin_id,
+                            text="🔄 Автоматический перезапуск бота (00:00)\nПостинг будет возобновлён через несколько секунд..."
+                        )
+                    except Exception as e:
+                        log_error(f"Не удалось отправить уведомление админу {admin_id}", e)
+                
+                await asyncio.sleep(5)
+                
+                # Перезапускаем постинг
+                asyncio.create_task(
+                    poster.run_posting_cycle(
+                        bot_instance=application.bot,
+                        admin_ids=admin_ids
                     )
-                except:
-                    pass
-            
-            await asyncio.sleep(5)
-            
-            # Перезапускаем постинг
-            asyncio.create_task(
-                poster.run_posting_cycle(
-                    bot_instance=application.bot,
-                    admin_ids=CONFIG["telegram"]["admin_ids"]
                 )
-            )
-            
-            logger.info("✅ Постинг перезапущен")
+                
+                logger.info("✅ Постинг перезапущен")
+            except Exception as e:
+                log_error("Ошибка в midnight_restart_loop", e)
+                await asyncio.sleep(60)  # Подождать минуту при ошибке
     
     # Регистрируем callback для запуска после инициализации
     app.post_init = post_init
