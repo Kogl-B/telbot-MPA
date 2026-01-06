@@ -628,6 +628,7 @@ async def cmd_status(update, context):
     schedule = CONFIG.get("schedule", {})
     interval = schedule.get("post_interval_minutes", 30)
     status_lines.append(f"⏱ Интервал: *{interval}* мин")
+    status_lines.append(f"📋 Режим: *1 пост → {interval} мин → следующий канал*")
     
     # Время до следующего поста
     if poster.is_posting and poster.last_post_time:
@@ -640,6 +641,15 @@ async def cmd_status(update, context):
             status_lines.append(f"⏳ До следующего поста: *{minutes}м {seconds}с*")
         else:
             status_lines.append(f"⏳ До следующего поста: *скоро...*")
+    elif poster.is_posting:
+        # Постинг активен, но еще не было ни одного поста
+        status_lines.append(f"⏳ До следующего поста: *ожидание первого поста...*")
+    
+    # Последний пост (для отладки)
+    if poster.last_post_time:
+        time_since = datetime.now() - poster.last_post_time
+        minutes_since = int(time_since.total_seconds() / 60)
+        status_lines.append(f"🕐 Последний пост был: *{minutes_since}* мин назад")
     
     # Активные каналы
     enabled = get_enabled_channels()
