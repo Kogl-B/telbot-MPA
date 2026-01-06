@@ -1,122 +1,66 @@
-# TelBot 2.0 — Серверный бот автопостинга
+# TelBot 2.0 — Telegram Auto-Posting Bot
 
-Автоматический постинг контента в Telegram-каналы по расписанию.
+Бот для автоматического постинга контента в Telegram-каналы.
 
-## 🚀 Быстрая установка на сервер (Ubuntu)
-
-### Вариант 1: Автоматическая установка с вашего компьютера
+## Установка на сервере (Ubuntu)
 
 ```bash
-bash install_on_server.sh root@ваш_сервер
+# 1. Клонируйте репозиторий
+git clone https://github.com/Kogl-B/telbot-MPA.git
+cd telbot-MPA
+
+# 2. Установите зависимости
+pip install -r requirements.txt
+
+# 3. Запустите бота
+python3 telbot.py
 ```
 
-### Вариант 2: Установка прямо на сервере
+## Структура контента
 
-1. Загрузите файлы на сервер
-2. Запустите одну команду:
-
-```bash
-cd telbot
-sudo bash deploy.sh
+Контент должен быть в папке `content/` в формате:
 ```
-
-**Всё! Бот установлен, настроен и запущен автоматически.**
-
-📖 Подробная инструкция: [QUICK_START.md](QUICK_START.md)
-
----
-
-## 📋 Управление ботом на сервере
-
-```bash
-systemctl status telbot      # Статус
-systemctl restart telbot     # Перезапуск
-journalctl -u telbot -f      # Логи в реальном времени
-```
-
----
-
-## Быстрый старт (локально)
-
-```bash
-cd telbot
-python telbot.py
+content/
+├── 2026-01/           # Месяц
+│   ├── naruto/        # Канал
+│   │   ├── Sakura/    # Категория
+│   │   │   ├── img1.jpg
+│   │   │   └── img2.png
+│   │   └── Hinata/
+│   ├── atla/
+│   └── harry_potter/
 ```
 
 ## Команды бота
 
 | Команда | Описание |
 |---------|----------|
-| `/status` | Текущий статус бота |
+| `/status` | Статус бота |
 | `/stats` | Статистика контента |
 | `/posting_start` | Запустить автопостинг |
-| `/posting_stop` | Остановить автопостинг |
+| `/posting_stop` | Остановить |
 | `/post_now` | Опубликовать сейчас |
-| `/post_now atla` | Опубликовать в конкретный канал |
 | `/channels` | Список каналов |
-| `/test` | Тест подключения к каналам |
-| `/help` | Справка |
+| `/test` | Тест подключения |
 
-## Папки
+## Запуск как systemd сервис
 
-| Папка | Назначение |
-|-------|------------|
-| `content/` | Контент для публикации |
-| `archives/` | Архив опубликованного |
-| `config/` | Конфигурация |
-| `logs/` | Журналы работы |
-
-## Структура content/
-
-```
-content/
-├── atla/              # Avatar: The Last Airbender
-│   ├── Azula/
-│   ├── Katara/
-│   └── ...
-├── naruto/            # Naruto
-├── harry_potter/      # Harry Potter
-└── mpa_disney/        # Disney
+```bash
+# Создайте файл сервиса
+sudo nano /etc/systemd/system/telbot.service
 ```
 
-## Настройка
-
-### Расписание (config_custom.json)
-
-```json
-{
-  "schedule": {
-    "post_interval_minutes": 30,
-    "first_post_hour": 0,
-    "last_post_hour": 24
-  }
-}
-```
-
-### Токен бота
-
-```json
-{
-  "telegram": {
-    "bot_token": "YOUR_BOT_TOKEN",
-    "admin_ids": [123456789]
-  }
-}
-```
-
-## Systemd сервис
-
-`/etc/systemd/system/telbot.service`:
+Содержимое:
 ```ini
 [Unit]
-Description=TelBot 2.0
+Description=TelBot
 After=network.target
 
 [Service]
 Type=simple
-User=www-data
+User=root
 WorkingDirectory=/opt/telbot
-ExecStart=/usr/bin/python3 telbot.py
+ExecStart=/usr/bin/python3 /opt/telbot/telbot.py
 Restart=always
 
 [Install]
@@ -124,30 +68,11 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+# Активируйте и запустите
 sudo systemctl daemon-reload
 sudo systemctl enable telbot
 sudo systemctl start telbot
+
+# Проверьте статус
 sudo systemctl status telbot
-```
-
-## Обновление контента
-
-1. Подготовьте пакет на локальном компьютере через `content_manager.py`
-2. Загрузите на сервер:
-   ```bash
-   scp -r upload/2025-01/* user@server:/opt/telbot/content/
-   ```
-3. Бот автоматически найдёт новый контент
-
-## Проверка работы
-
-```bash
-# Логи в реальном времени
-tail -f logs/telbot_*.log
-
-# Статус сервиса
-systemctl status telbot
-
-# Журнал systemd
-journalctl -u telbot -f
 ```
