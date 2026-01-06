@@ -87,7 +87,8 @@ def load_config() -> dict:
     if not config_file.exists():
         config = {
             "telegram": {
-                "bot_token": BOT_TOKEN
+                "bot_token": BOT_TOKEN,
+                "admin_ids": []
             },
             "channels": {},
             "settings": {
@@ -102,6 +103,10 @@ def load_config() -> dict:
     if "telegram" not in config:
         config["telegram"] = {}
     config["telegram"]["bot_token"] = BOT_TOKEN
+    
+    # Устанавливаем пустой список admin_ids, если его нет
+    if "admin_ids" not in config["telegram"]:
+        config["telegram"]["admin_ids"] = []
     
     # Загружаем пользовательские настройки
     if custom_config_file.exists():
