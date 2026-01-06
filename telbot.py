@@ -91,6 +91,10 @@ def load_config() -> dict:
                 "admin_ids": []
             },
             "channels": {},
+            "schedule": {
+                "post_interval_minutes": 30,
+                "daily_restart_time": "00:00"
+            },
             "settings": {
                 "supported_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm"]
             }
@@ -107,6 +111,13 @@ def load_config() -> dict:
     # Устанавливаем пустой список admin_ids, если его нет
     if "admin_ids" not in config["telegram"]:
         config["telegram"]["admin_ids"] = []
+    
+    # Устанавливаем schedule, если его нет
+    if "schedule" not in config:
+        config["schedule"] = {
+            "post_interval_minutes": 30,
+            "daily_restart_time": "00:00"
+        }
     
     # Загружаем пользовательские настройки
     if custom_config_file.exists():
