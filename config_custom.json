@@ -1,0 +1,215 @@
+{
+  "channels": {
+    "mpa_disney": {
+      "channel_id": "-1002444770130",
+      "name": "Universe Disney Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "princess_jasmin": {
+          "folder_name": "Princess Jasmin",
+          "hashtags": [
+            "#Jasmin",
+            "#jasmin"
+          ]
+        },
+        "elsa": {
+          "folder_name": "Elsa Frozzen",
+          "hashtags": [
+            "#Elsa",
+            "#elsa"
+          ]
+        },
+        "anna": {
+          "folder_name": "Anna Frozzen",
+          "hashtags": [
+            "#Anna",
+            "#anna"
+          ]
+        },
+        "group": {
+          "folder_name": "Group",
+          "hashtags": [
+            "#Group",
+            "#group"
+          ]
+        },
+        "alice": {
+          "folder_name": "Alice",
+          "hashtags": [
+            "#Alice_in_Wonderland",
+            "#alice_in_wonderland"
+          ]
+        },
+        "elsa_and_anna": {
+          "folder_name": "Elsa and Anna",
+          "hashtags": [
+            "#ElsaAnna",
+            "#elsaanna",
+            "#Elsa",
+            "#Anna"
+          ]
+        }
+      }
+    },
+    "harry_potter": {
+      "channel_id": "-1002504735486",
+      "name": "Universe Harry Potter Erotic Art +18",
+      "enabled": true,
+      "categories": {
+        "hermione": {
+          "folder_name": "Hermione Grander",
+          "hashtags": [
+            "#Hermione_Granger",
+            "#hermione",
+            "#Hermione"
+          ]
+        },
+        "ginny": {
+          "folder_name": "Ginny_Weasley",
+          "hashtags": [
+            "#Ginny_Weasley",
+            "#ginny",
+            "#Ginny"
+          ]
+        },
+        "luna": {
+          "folder_name": "Luna_Lovegood",
+          "hashtags": [
+            "#Luna_Lovegood",
+            "#luna",
+            "#Luna"
+          ]
+        },
+        "hermione_and_ginny": {
+          "folder_name": "Hermione and Ginny",
+          "hashtags": [
+            "#hermione_ginny",
+            "#hermione_ginny",
+            "#Hermione_Granger",
+            "#Ginny_Weasley"
+          ]
+        }
+      }
+    },
+    "atla": {
+      "channel_id": "-1002583181711",
+      "name": "Universe The Avatar Legend of AANG Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "katara": {
+          "folder_name": "Katara",
+          "hashtags": [
+            "#Katara",
+            "#katara"
+          ]
+        },
+        "azula": {
+          "folder_name": "Azula",
+          "hashtags": [
+            "#Azula",
+            "#azula"
+          ]
+        },
+        "tai_le": {
+          "folder_name": "Tai Le",
+          "hashtags": [
+            "#Tai_Le",
+            "#taile",
+            "#TaiLe"
+          ]
+        },
+        "mai": {
+          "folder_name": "Mai",
+          "hashtags": [
+            "#Mai",
+            "#mai"
+          ]
+        },
+        "yui": {
+          "folder_name": "Yui",
+          "hashtags": [
+            "#Yui",
+            "#yui"
+          ]
+        },
+        "toph": {
+          "folder_name": "Toph",
+          "hashtags": [
+            "#Toph",
+            "#toph"
+          ]
+        },
+        "korra": {
+          "folder_name": "Korra",
+          "hashtags": [
+            "#Korra",
+            "#korra"
+          ]
+        }
+      }
+    },
+    "naruto": {
+      "channel_id": "-1002156790012",
+      "name": "Universe Naruto Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "sakura": {
+          "folder_name": "Sakura",
+          "hashtags": [
+            "#Sakura",
+            "#sakura"
+          ]
+        },
+        "hinata": {
+          "folder_name": "Hinata",
+          "hashtags": [
+            "#Hinata",
+            "#hinata"
+          ]
+        },
+        "tsunade": {
+          "folder_name": "Tsunade",
+          "hashtags": [
+            "#Tsunade",
+            "#tsunade"
+          ]
+        },
+        "hanabi": {
+          "folder_name": "Hanabi",
+          "hashtags": [
+            "#Hanabi",
+            "#hanabi"
+          ]
+        },
+        "ino": {
+          "folder_name": "Ino",
+          "hashtags": [
+            "#Ino",
+            "#ino"
+          ]
+        },
+        "tenten": {
+          "folder_name": "TenTen",
+          "hashtags": [
+            "#TenTen",
+            "#tenten"
+          ]
+        },
+        "temari": {
+          "folder_name": "Temari",
+          "hashtags": [
+            "#Temari",
+            "#temari"
+          ]
+        },
+        "kushina": {
+          "folder_name": "Kushina",
+          "hashtags": [
+            "#Kushina",
+            "#kushina"
+          ]
+        }
+      }
+    }
+  }
+}
