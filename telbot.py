@@ -684,14 +684,34 @@ class TelegramPoster:
             # Удаляем опубликованное изображение
             try:
                 if image_path.exists():
-                    image_path.unlink()
-                    logger.info(f"🗑️ Успешно удалено: {image_path.name}")
+                    # Попытка 1: обычное удаление
+                    try:
+                        image_path.unlink()
+                        logger.info(f"🗑️ Успешно удалено: {image_path.name}")
+                    except PermissionError:
+                        # Попытка 2: изменяем права и пробуем снова
+                        logger.warning(f"⚠️ Нет прав на удаление, пытаюсь исправить права: {image_path.name}")
+                        import stat
+                        import os
+                        try:
+                            # Даём полные права владельцу
+                            os.chmod(image_path, stat.S_IWUSR | stat.S_IRUSR)
+                            image_path.unlink()
+                            logger.info(f"🗑️ Успешно удалено после исправления прав: {image_path.name}")
+                        except Exception as e2:
+                            # Попытка 3: перемещаем в архив вместо удаления
+                            archive_dir = self.content_path / "archive"
+                            ensure_directory_with_permissions(archive_dir)
+                            archive_path = archive_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{image_path.name}"
+                            try:
+                                shutil.move(str(image_path), str(archive_path))
+                                logger.info(f"📦 Файл перемещён в архив: {archive_path.name}")
+                            except Exception as e3:
+                                log_error(f"Не удалось удалить или переместить файл: {image_path}", e3)
                 else:
                     log_error(f"Файл уже не существует при попытке удаления: {image_path}")
-            except PermissionError as e:
-                log_error(f"Нет прав на удаление файла: {image_path}", e)
             except Exception as e:
-                log_error(f"Ошибка удаления файла: {image_path}", e)
+                log_error(f"Критическая ошибка при работе с файлом: {image_path}", e)
             
             # Запоминаем время последнего поста
             self.last_post_time = datetime.now()
