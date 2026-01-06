@@ -1,0 +1,25 @@
+[Unit]
+Description=TelBot 2.0 - Telegram Auto-Posting Bot
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telbot
+Group=telbot
+WorkingDirectory=/opt/telbot
+ExecStart=/opt/telbot/venv/bin/python /opt/telbot/telbot.py
+Restart=always
+RestartSec=10
+Environment="PYTHONUNBUFFERED=1"
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=telbot
+
+# Ограничения ресурсов
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
