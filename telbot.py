@@ -80,14 +80,42 @@ error_handler = logging.FileHandler(error_log_file, encoding='utf-8')
 error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 error_logger.addHandler(error_handler)
 
-def log_error(message: str, exc: Exception = None):
-    """Логирует ошибку в оба лога"""
+# Глобальные переменные для отправки ошибок в Telegram
+GLOBAL_BOT_INSTANCE = None
+GLOBAL_ADMIN_IDS = []
+
+async def send_error_to_admins(message: str):
+    """Отправляет сообщение об ошибке всем админам в Telegram"""
+    if not GLOBAL_BOT_INSTANCE or not GLOBAL_ADMIN_IDS:
+        return
+    
+    error_text = f"⚠️ ОШИБКА\n\n{message}"
+    for admin_id in GLOBAL_ADMIN_IDS:
+        try:
+            await GLOBAL_BOT_INSTANCE.send_message(chat_id=admin_id, text=error_text)
+        except Exception as e:
+            logger.error(f"Не удалось отправить ошибку админу {admin_id}: {e}")
+
+def log_error(message: str, exc: Exception = None, notify_admin: bool = True):
+    """Логирует ошибку в оба лога и отправляет админу в Telegram"""
     full_message = f"{message}" + (f" | Exception: {exc}" if exc else "")
     logger.error(full_message)
     error_logger.error(full_message)
+    
     if exc:
         import traceback
-        error_logger.error(traceback.format_exc())
+        tb = traceback.format_exc()
+        error_logger.error(tb)
+        full_message += f"\n\n{tb[:500]}"  # Первые 500 символов traceback
+    
+    # Отправляем в Telegram
+    if notify_admin and GLOBAL_BOT_INSTANCE:
+        import asyncio
+        try:
+            # Создаем задачу для отправки (не блокируем выполнение)
+            asyncio.create_task(send_error_to_admins(full_message[:1000]))  # Ограничиваем длину
+        except:
+            pass
 
 # ============================================
 # ЗАГРУЗКА КОНФИГУРАЦИИ
@@ -176,6 +204,18 @@ def get_enabled_channels() -> Dict:
         key: cfg for key, cfg in CONFIG["channels"].items()
         if cfg.get("enabled", True)
     }
+
+def ensure_directory_with_permissions(path: Path) -> bool:
+    """Создает директорию с нужными правами, если она не существует"""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        # Устанавливаем права 0755 (rwxr-xr-x)
+        import stat
+        path.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        return True
+    except Exception as e:
+        log_error(f"Ошибка создания папки {path}", e)
+        return False
 
 def generate_unique_filename(directory: Path, filename: str) -> str:
     """Генерирует уникальное имя файла"""
@@ -378,9 +418,13 @@ class PhotoUploader:
         result["category"] = cat_info["category"]
         result["channel"] = cat_info["channel_key"]
         
-        # Путь для сохранения
-        target_dir = self.content_path / cat_info["channel_key"] / cat_info["category"]
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # Определяем папку текущего месяца
+        now = datetime.now()
+        current_month = now.strftime("%Y-%m")
+        
+        # Путь для сохранения в папке текущего месяца
+        target_dir = self.content_path / current_month / cat_info["channel_key"] / cat_info["category"]
+        ensure_directory_with_permissions(target_dir)
         
         # Скачиваем и сохраняем фото
         import random
@@ -431,6 +475,24 @@ class TelegramPoster:
         self.is_posting = False
         self.state_file = BASE_DIR / "posting_state.json"
         self.last_post_time = None
+        
+        # Создаем папки для текущего и предыдущего месяца
+        now = datetime.now()
+        current_month = now.strftime("%Y-%m")
+        if now.month == 1:
+            prev_month = f"{now.year - 1}-12"
+        else:
+            prev_month = f"{now.year}-{now.month - 1:02d}"
+        
+        # Создаем месячные папки
+        ensure_directory_with_permissions(self.content_path / current_month)
+        ensure_directory_with_permissions(self.content_path / prev_month)
+        
+        # Создаем папки для каждого канала
+        for channel_key in self.channels_list:
+            ensure_directory_with_permissions(self.content_path / current_month / channel_key)
+            ensure_directory_with_permissions(self.content_path / prev_month / channel_key)
+        
         self._load_state()
     
     def _load_state(self):
@@ -979,6 +1041,11 @@ def main():
     
     logger.info("✅ Бот готов к работе")
     logger.info(f"📁 Папка контента: {PATHS['content']}")
+    
+    # Устанавливаем глобальные переменные для отправки ошибок в Telegram
+    global GLOBAL_BOT_INSTANCE, GLOBAL_ADMIN_IDS
+    GLOBAL_BOT_INSTANCE = app.bot
+    GLOBAL_ADMIN_IDS = CONFIG.get("telegram", {}).get("admin_ids", [])
     
     # Безопасное получение admin_ids
     def get_admin_ids():
