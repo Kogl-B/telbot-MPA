@@ -18,6 +18,17 @@ wget -qO- https://raw.githubusercontent.com/Kogl-B/telbot-MPA/main/install.sh | 
 
 **Вот и всё!** 🎉 Бот автоматически установится и запустится.
 
+### ⚠️ Если установка не работает (ошибки apt)
+
+Используйте упрощенный установщик:
+
+```bash
+wget https://raw.githubusercontent.com/Kogl-B/telbot-MPA/main/install_simple.sh
+sudo bash install_simple.sh
+```
+
+**Или** см. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) для ручной установки.
+
 ### Что делает установщик?
 
 ✅ Устанавливает все зависимости (Python, git и т.д.)

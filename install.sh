@@ -85,6 +85,25 @@ check_system() {
     print_success "Система поддерживается"
 }
 
+# Исправление проблем с пакетами
+fix_package_issues() {
+    print_header "Исправление проблем с пакетами"
+    
+    print_info "Очистка кеша пакетов..."
+    apt-get clean > /dev/null 2>&1 || true
+    
+    print_info "Исправление сломанных зависимостей..."
+    apt-get install -f -y > /dev/null 2>&1 || true
+    
+    print_info "Настройка незавершенных пакетов..."
+    dpkg --configure -a > /dev/null 2>&1 || true
+    
+    print_info "Обновление списка пакетов..."
+    apt-get update -qq 2>&1 | grep -v "^Get:" | grep -v "^Hit:" | grep -v "^Reading" || true
+    
+    print_success "Проблемы с пакетами исправлены"
+}
+
 # Установка зависимостей
 install_dependencies() {
     print_header "Установка зависимостей"
@@ -92,16 +111,37 @@ install_dependencies() {
     print_info "Обновление списка пакетов..."
     apt-get update -qq
     
+    print_info "Исправление возможных проблем с пакетами..."
+    apt-get install -f -y > /dev/null 2>&1 || true
+    dpkg --configure -a > /dev/null 2>&1 || true
+    
     print_info "Установка необходимых пакетов..."
-    apt-get install -y -qq \
-        python3 \
-        python3-pip \
-        python3-venv \
-        git \
-        curl \
-        wget \
-        systemctl \
-        > /dev/null
+    
+    # Устанавливаем пакеты по одному для лучшей диагностики
+    PACKAGES="python3 python3-pip python3-venv git curl wget"
+    
+    for pkg in $PACKAGES; do
+        if ! dpkg -l | grep -q "^ii  $pkg "; then
+            print_info "Установка $pkg..."
+            if ! apt-get install -y -qq "$pkg" 2>/dev/null; then
+                print_warning "Не удалось установить $pkg через apt, пробуем альтернативный метод..."
+                apt-get install -y --fix-broken "$pkg" 2>/dev/null || apt-get install -y "$pkg" || true
+            fi
+        else
+            print_info "$pkg уже установлен"
+        fi
+    done
+    
+    # Проверка критичных пакетов
+    if ! command -v python3 &> /dev/null; then
+        print_error "Python3 не установлен. Установите вручную: apt-get install python3"
+        exit 1
+    fi
+    
+    if ! command -v git &> /dev/null; then
+        print_error "Git не установлен. Установите вручную: apt-get install git"
+        exit 1
+    fi
     
     print_success "Зависимости установлены"
 }
@@ -154,12 +194,29 @@ setup_python_env() {
     
     cd "$INSTALL_DIR"
     
-    print_info "Создание виртуального окружения..."
-    sudo -u $SERVICE_NAME python3 -m venv venv
+    # Проверка наличия python3-venv
+    if ! python3 -m venv --help &> /dev/null; then
+        print_warning "python3-venv не найден, устанавливаем..."
+        apt-get install -y python3-venv > /dev/null 2>&1 || true
+    fi
     
-    print_info "Установка Python зависимостей..."
-    sudo -u $SERVICE_NAME venv/bin/pip install --upgrade pip -q
-    sudo -u $SERVICE_NAME venv/bin/pip install -r requirements.txt -q
+    print_info "Создание виртуального окружения..."
+    if ! sudo -u $SERVICE_NAME python3 -m venv venv 2>/dev/null; then
+        print_warning "Не удалось создать venv стандартным способом, пробуем альтернативу..."
+        python3 -m venv venv
+        chown -R $SERVICE_NAME:$SERVICE_NAME venv
+    fi
+    
+    print_info "Обновление pip..."
+    sudo -u $SERVICE_NAME venv/bin/pip install --upgrade pip -q 2>/dev/null || \
+        venv/bin/pip install --upgrade pip -q
+    
+    print_info "Установка Python зависимостей (это может занять минуту)..."
+    if ! sudo -u $SERVICE_NAME venv/bin/pip install -r requirements.txt -q 2>/dev/null; then
+        print_warning "Установка от пользователя telbot не удалась, пробуем от root..."
+        venv/bin/pip install -r requirements.txt -q
+        chown -R $SERVICE_NAME:$SERVICE_NAME venv
+    fi
     
     print_success "Python окружение настроено"
 }
@@ -266,6 +323,7 @@ main() {
     
     check_root
     check_system
+    fix_package_issues
     install_dependencies
     create_bot_user
     clone_repository
