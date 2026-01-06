@@ -2,36 +2,83 @@
 
 Автоматический постинг контента в Telegram-каналы по расписанию.
 
-## 🚀 Быстрая установка на сервер (Ubuntu)
+## 🚀 Супербыстрая установка на Ubuntu (одна команда!)
 
-### Вариант 1: Автоматическая установка с вашего компьютера
-
-```bash
-bash install_on_server.sh root@ваш_сервер
-```
-
-### Вариант 2: Установка прямо на сервере
-
-1. Загрузите файлы на сервер
-2. Запустите одну команду:
+Просто выполните на вашем Ubuntu сервере:
 
 ```bash
-cd telbot
-sudo bash deploy.sh
+curl -fsSL https://raw.githubusercontent.com/Kogl-B/telbot-MPA/main/install.sh | sudo bash
 ```
 
-**Всё! Бот установлен, настроен и запущен автоматически.**
+или
 
-📖 Подробная инструкция: [QUICK_START.md](QUICK_START.md)
+```bash
+wget -qO- https://raw.githubusercontent.com/Kogl-B/telbot-MPA/main/install.sh | sudo bash
+```
+
+**Вот и всё!** 🎉 Бот автоматически установится и запустится.
+
+### Что делает установщик?
+
+✅ Устанавливает все зависимости (Python, git и т.д.)
+✅ Создает пользователя для бота
+✅ Клонирует репозиторий в `/opt/telbot`
+✅ Настраивает виртуальное окружение
+✅ Создает systemd сервис
+✅ Запускает бота автоматически
 
 ---
 
-## 📋 Управление ботом на сервере
+## 🎮 Управление ботом
 
 ```bash
-systemctl status telbot      # Статус
-systemctl restart telbot     # Перезапуск
-journalctl -u telbot -f      # Логи в реальном времени
+# Статус бота
+sudo systemctl status telbot
+
+# Перезапуск
+sudo systemctl restart telbot
+
+# Остановить
+sudo systemctl stop telbot
+
+# Запустить
+sudo systemctl start telbot
+
+# Логи в реальном времени
+sudo journalctl -u telbot -f
+
+# Или логи бота
+sudo tail -f /opt/telbot/logs/telbot_*.log
+```
+
+---
+
+## 📂 Структура после установки
+
+```
+/opt/telbot/
+├── telbot.py              # Основной скрипт
+├── config_custom.json     # Конфигурация (уже готова!)
+├── content/               # Сюда добавляйте контент
+│   ├── mpa_disney/
+│   ├── harry_potter/
+│   ├── atla/
+│   └── naruto/
+├── logs/                  # Логи
+└── venv/                  # Python окружение
+```
+
+## 📸 Добавление контента
+
+```bash
+# Создайте папки для контента
+sudo mkdir -p /opt/telbot/content/mpa_disney/"Princess Jasmin"
+
+# Скопируйте изображения
+sudo cp ваши_картинки/* /opt/telbot/content/mpa_disney/"Princess Jasmin"/
+
+# Установите права
+sudo chown -R telbot:telbot /opt/telbot/content/
 ```
 
 ---

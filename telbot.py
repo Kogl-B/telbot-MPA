@@ -79,6 +79,7 @@ def load_config() -> dict:
     """Загружает конфигурацию из файлов"""
     # Токен бота зашит в код
     BOT_TOKEN = "7601569334:AAGGST1To37UzoIfw1z34X1wytqS71Z1nnA"
+    ADMIN_ID = 1980584772
     
     config_file = PATHS["config"] / "config.json"
     custom_config_file = BASE_DIR / "config_custom.json"
@@ -88,7 +89,7 @@ def load_config() -> dict:
         config = {
             "telegram": {
                 "bot_token": BOT_TOKEN,
-                "admin_ids": []
+                "admin_ids": [ADMIN_ID]
             },
             "channels": {},
             "schedule": {
@@ -108,9 +109,12 @@ def load_config() -> dict:
         config["telegram"] = {}
     config["telegram"]["bot_token"] = BOT_TOKEN
     
-    # Устанавливаем пустой список admin_ids, если его нет
+    # Устанавливаем admin_ids, если его нет
     if "admin_ids" not in config["telegram"]:
-        config["telegram"]["admin_ids"] = []
+        config["telegram"]["admin_ids"] = [ADMIN_ID]
+    elif ADMIN_ID not in config["telegram"]["admin_ids"]:
+        # Добавляем admin_id, если его еще нет в списке
+        config["telegram"]["admin_ids"].append(ADMIN_ID)
     
     # Устанавливаем schedule, если его нет
     if "schedule" not in config:
