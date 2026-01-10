@@ -17,6 +17,10 @@ if [ ! -f python3 ]; then
     echo "✅ Создан симлинк python3"
 fi
 
+# Установить зависимости
+echo "📦 Установка зависимостей..."
+/opt/telbot/venv/bin/pip install -r /opt/telbot/requirements.txt
+
 # Установить права
 chmod +x /opt/telbot/telbot.py
 chown -R telbot:telbot /opt/telbot

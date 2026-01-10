@@ -176,6 +176,13 @@ def load_config() -> dict:
             # Глубокое обновление конфига
             deep_update(config, custom)
         logger.info("✅ Загружена пользовательская конфигурация")
+    else:
+        logger.warning(f"⚠️ Файл {custom_config_file} не найден, используются настройки по умолчанию")
+    
+    # Логируем итоговый интервал для отладки
+    schedule = config.get("schedule", {})
+    interval = schedule.get("post_interval_minutes", 30)
+    logger.info(f"📋 Интервал постинга из конфига: {interval} мин")
     
     return config
 
@@ -632,29 +639,83 @@ class TelegramPoster:
         return random.choice(all_images)
     
     async def post_image(self, channel_id: str, image_path: Path, caption: str = "") -> bool:
-        """Отправляет изображение или видео в канал"""
-        try:
-            from telegram import Bot
-            bot = Bot(token=self.bot_token)
-            
-            if not image_path.exists():
-                log_error(f"Файл не существует: {image_path}")
-                return False
-            
-            suffix = image_path.suffix.lower()
-            with open(image_path, "rb") as f:
-                if suffix == ".gif":
-                    await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
-                elif suffix in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
-                    await bot.send_video(chat_id=channel_id, video=f, caption=caption)
-                else:
-                    await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
-            
-            logger.info(f"📤 Отправлено в {channel_id}: {image_path.name}")
-            return True
-        except Exception as e:
-            log_error(f"Ошибка отправки в {channel_id}: {image_path.name}", e)
+        """Отправляет изображение или видео в канал с retry логикой"""
+        from telegram import Bot
+        from telegram.request import HTTPXRequest
+        import httpx
+        
+        if not image_path.exists():
+            log_error(f"Файл не существует: {image_path}")
             return False
+        
+        # Настройки
+        max_retries = 3
+        retry_delay = 10
+        
+        # Увеличенные таймауты
+        request = HTTPXRequest(
+            read_timeout=120.0,
+            write_timeout=120.0,
+            connect_timeout=60.0,
+            pool_timeout=60.0
+        )
+        bot = Bot(token=self.bot_token, request=request)
+        
+        suffix = image_path.suffix.lower()
+        
+        # Отправляем файл
+        for attempt in range(max_retries):
+            try:
+                with open(image_path, "rb") as f:
+                    if suffix == ".gif":
+                        await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
+                    elif suffix in [".mp4", ".mov", ".avi", ".mkv", ".webm"]:
+                        await bot.send_video(chat_id=channel_id, video=f, caption=caption)
+                    else:
+                        await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
+                
+                logger.info(f"📤 Отправлено в {channel_id}: {image_path.name}")
+                return True
+                
+            except (httpx.TimeoutException, asyncio.TimeoutError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⏱️ Таймаут при отправке {image_path.name}, попытка {attempt + 1}/{max_retries}. Повтор через {retry_delay} сек...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    log_error(f"Ошибка отправки в {channel_id}: {image_path.name} (все {max_retries} попытки исчерпаны)", e)
+                    return False
+                    
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Файл слишком большой - отправляем как документ
+                if "too big" in error_str or "too large" in error_str:
+                    logger.warning(f"⚠️ Файл слишком большой для фото, отправляем как документ: {image_path.name}")
+                    try:
+                        with open(image_path, "rb") as f:
+                            await bot.send_document(chat_id=channel_id, document=f, caption=caption)
+                        logger.info(f"📤 Отправлено как документ в {channel_id}: {image_path.name}")
+                        return True
+                    except Exception as e2:
+                        log_error(f"Не удалось отправить как документ: {image_path.name}", e2)
+                        return False
+                
+                # Ошибка обработки изображения
+                if "image_process_failed" in error_str or "wrong file" in error_str:
+                    log_error(f"Файл повреждён или не поддерживается Telegram: {image_path.name}", e)
+                    return False
+                
+                # Другие ошибки - retry
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Ошибка при отправке {image_path.name}, попытка {attempt + 1}/{max_retries}. Повтор через {retry_delay} сек...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    log_error(f"Ошибка отправки в {channel_id}: {image_path.name}", e)
+                    return False
+        
+        return False
     
     async def post_and_delete(self, channel_key: str) -> bool:
         """Публикует изображение и удаляет его"""
@@ -712,10 +773,6 @@ class TelegramPoster:
                     log_error(f"Файл уже не существует при попытке удаления: {image_path}")
             except Exception as e:
                 log_error(f"Критическая ошибка при работе с файлом: {image_path}", e)
-            
-            # Запоминаем время последнего поста
-            self.last_post_time = datetime.now()
-            self._save_state()
         else:
             log_error(f"Не удалось опубликовать в {channel_key}: {image_path}")
         
@@ -725,6 +782,7 @@ class TelegramPoster:
         """Запускает цикл автоматического постинга
         
         Логика: 1 пост в 1 канал -> таймер -> 1 пост в следующий канал -> таймер -> ...
+        Использует точное время следующего поста вместо sleep для надёжности.
         """
         self.is_posting = True
         self._save_state()
@@ -739,8 +797,62 @@ class TelegramPoster:
         
         logger.info(f"📋 Настройки: интервал {interval_minutes} мин, активное время {first_hour}:00-{last_hour}:00")
         
+        # Вычисляем время следующего поста
+        def calculate_next_post_time() -> datetime:
+            """Вычисляет точное время следующего поста"""
+            now = datetime.now()
+            
+            # Если есть время последнего поста - считаем от него
+            if self.last_post_time:
+                next_time = self.last_post_time + timedelta(minutes=interval_minutes)
+                # Если уже пропустили - постим сразу
+                if next_time <= now:
+                    return now
+                return next_time
+            else:
+                # Первый пост - сразу
+                return now
+        
+        # Отправляем отчёт админам о запуске
+        if bot_instance and admin_ids:
+            try:
+                next_post = calculate_next_post_time()
+                for admin_id in admin_ids:
+                    await bot_instance.send_message(
+                        chat_id=admin_id,
+                        text=f"🚀 Автопостинг запущен!\n\n"
+                             f"⏱ Интервал: {interval_minutes} мин\n"
+                             f"📺 Каналов: {len(self.channels_list)}\n"
+                             f"⏰ Следующий пост: {next_post.strftime('%H:%M:%S')}"
+                    )
+            except Exception as e:
+                logger.warning(f"Не удалось отправить уведомление о запуске: {e}")
+        
         while self.is_posting:
             try:
+                now = datetime.now()
+                next_post_time = calculate_next_post_time()
+                
+                # Вычисляем сколько ждать
+                wait_seconds = (next_post_time - now).total_seconds()
+                
+                if wait_seconds > 0:
+                    # Логируем время ожидания
+                    wait_minutes = int(wait_seconds / 60)
+                    wait_secs = int(wait_seconds % 60)
+                    logger.info(f"⏳ Следующий пост в {next_post_time.strftime('%H:%M:%S')} (через {wait_minutes}м {wait_secs}с)")
+                    
+                    # Ждём небольшими интервалами для возможности остановки
+                    while wait_seconds > 0 and self.is_posting:
+                        sleep_time = min(wait_seconds, 30)  # Проверяем каждые 30 сек
+                        await asyncio.sleep(sleep_time)
+                        wait_seconds -= sleep_time
+                    
+                    # Проверяем, не остановили ли постинг
+                    if not self.is_posting:
+                        break
+                
+                # Обновляем текущее время
                 now = datetime.now()
                 
                 # Проверяем активное время (если задано)
@@ -749,32 +861,50 @@ class TelegramPoster:
                     
                     if channel_key:
                         channel_name = CONFIG["channels"].get(channel_key, {}).get("name", channel_key)
-                        logger.info(f"⏰ Постинг в канал: {channel_name} ({channel_key})")
+                        logger.info(f"⏰ [{now.strftime('%H:%M:%S')}] Постинг в канал: {channel_name} ({channel_key})")
                         
                         success = await self.post_and_delete(channel_key)
                         
+                        # Обновляем время последнего поста ПОСЛЕ публикации
+                        self.last_post_time = datetime.now()
+                        self._save_state()
+                        
+                        # Вычисляем время следующего поста для отчёта
+                        next_post = self.last_post_time + timedelta(minutes=interval_minutes)
+                        
                         if success:
-                            logger.info(f"✅ Успешно опубликовано в {channel_name}. Следующий пост через {interval_minutes} мин.")
-                        elif bot_instance and admin_ids:
-                            for admin_id in admin_ids:
-                                try:
-                                    await bot_instance.send_message(
-                                        chat_id=admin_id,
-                                        text=f"⚠️ Не удалось опубликовать пост в {channel_name}\nВозможно, закончился контент."
-                                    )
-                                except Exception as e:
-                                    log_error(f"Не удалось отправить уведомление админу {admin_id}", e)
+                            logger.info(f"✅ Успешно опубликовано в {channel_name}. Следующий пост в {next_post.strftime('%H:%M:%S')} (+{interval_minutes} мин)")
+                        else:
+                            # Ошибка публикации
+                            if bot_instance and admin_ids:
+                                for admin_id in admin_ids:
+                                    try:
+                                        await bot_instance.send_message(
+                                            chat_id=admin_id,
+                                            text=f"⚠️ Не удалось опубликовать пост в {channel_name}\n"
+                                                 f"Возможно, закончился контент или проблема с файлом.\n"
+                                                 f"⏰ Следующая попытка: {next_post.strftime('%H:%M:%S')}"
+                                        )
+                                    except Exception as e:
+                                        log_error(f"Не удалось отправить уведомление админу {admin_id}", e)
                     else:
                         log_error("Нет доступных каналов для постинга")
+                        # Всё равно обновляем время, чтобы не спамить ошибками
+                        self.last_post_time = datetime.now()
+                        self._save_state()
                 else:
                     logger.debug(f"💤 Вне активного времени ({first_hour}:00-{last_hour}:00)")
+                    # Ждём до начала активного времени или интервал
+                    self.last_post_time = datetime.now()
+                    self._save_state()
                 
-                # Ждём указанный интервал перед следующим постом
-                await asyncio.sleep(interval_minutes * 60)
-                
+            except asyncio.CancelledError:
+                logger.info("⏹️ Цикл постинга отменён")
+                break
             except Exception as e:
                 log_error("Ошибка в цикле постинга", e)
-                await asyncio.sleep(60)  # Подождать минуту при ошибке
+                # При ошибке ждём минуту и пробуем снова
+                await asyncio.sleep(60)
         
         logger.info("⏹️ Цикл постинга остановлен")
     
@@ -854,41 +984,50 @@ async def cmd_status(update, context):
     status_lines.append(f"📋 Режим: *1 пост → {interval} мин → следующий канал*")
     
     # Время до следующего поста
+    now = datetime.now()
     if poster.is_posting and poster.last_post_time:
         next_post_time = poster.last_post_time + timedelta(minutes=interval)
-        time_remaining = next_post_time - datetime.now()
         
-        if time_remaining.total_seconds() > 0:
+        if next_post_time > now:
+            time_remaining = next_post_time - now
             minutes = int(time_remaining.total_seconds() / 60)
             seconds = int(time_remaining.total_seconds() % 60)
+            status_lines.append(f"⏳ Следующий пост в: *{next_post_time.strftime('%H:%M:%S')}*")
             status_lines.append(f"⏳ До следующего поста: *{minutes}м {seconds}с*")
         else:
-            status_lines.append(f"⏳ До следующего поста: *скоро...*")
+            status_lines.append(f"⏳ До следующего поста: *скоро\\.\\.\\.*")
     elif poster.is_posting:
-        # Постинг активен, но еще не было ни одного поста
-        status_lines.append(f"⏳ До следующего поста: *ожидание первого поста...*")
+        status_lines.append(f"⏳ До следующего поста: *ожидание первого поста\\.\\.\\.*")
     
-    # Последний пост (для отладки)
+    # Последний пост
     if poster.last_post_time:
-        time_since = datetime.now() - poster.last_post_time
+        time_since = now - poster.last_post_time
         minutes_since = int(time_since.total_seconds() / 60)
-        status_lines.append(f"🕐 Последний пост был: *{minutes_since}* мин назад")
+        seconds_since = int(time_since.total_seconds() % 60)
+        status_lines.append(f"🕐 Последний пост: *{poster.last_post_time.strftime('%H:%M:%S')}* \\({minutes_since}м {seconds_since}с назад\\)")
     
     # Активные каналы
     enabled = get_enabled_channels()
-    status_lines.append(f"📺 Активных каналов: *{len(enabled)}*")
+    status_lines.append(f"\n📺 Активных каналов: *{len(enabled)}*")
     
     # Следующий канал
     if poster.channels_list:
         next_channel = poster.channels_list[poster.current_channel_index]
         channel_name = CONFIG["channels"][next_channel].get("name", next_channel)
-        status_lines.append(f"➡️ Следующий: *{channel_name}*")
+        safe_name = escape_markdown(channel_name)
+        status_lines.append(f"➡️ Следующий: *{safe_name}*")
     
     # Контент
     stats = get_content_stats()
-    status_lines.append(f"\n📁 Контента: *{stats['total_images']}* шт.")
+    status_lines.append(f"\n📁 Контента: *{stats['total_images']}* шт\\.")
     
-    await update.message.reply_text("\n".join(status_lines), parse_mode="Markdown")
+    # Прогноз на сколько хватит
+    if stats['total_images'] > 0:
+        posts_per_day = (24 * 60) // interval
+        days_left = stats['total_images'] / posts_per_day if posts_per_day > 0 else 0
+        status_lines.append(f"📊 Контента хватит на: *{days_left:.1f}* дней")
+    
+    await update.message.reply_text("\n".join(status_lines), parse_mode="MarkdownV2")
 
 @admin_only
 async def cmd_stats(update, context):
@@ -1016,7 +1155,15 @@ def main():
     
     logger.info("🤖 Запуск TelBot 2.0...")
     
-    app = Application.builder().token(CONFIG["telegram"]["bot_token"]).build()
+    # Создаем Application с увеличенными таймаутами
+    from telegram.request import HTTPXRequest
+    request = HTTPXRequest(
+        read_timeout=60.0,
+        write_timeout=60.0,
+        connect_timeout=30.0,
+        pool_timeout=30.0
+    )
+    app = Application.builder().token(CONFIG["telegram"]["bot_token"]).request(request).build()
     
     # Регистрируем команды
     app.add_handler(CommandHandler("start", cmd_start))
