@@ -817,13 +817,36 @@ class TelegramPoster:
         if bot_instance and admin_ids:
             try:
                 next_post = calculate_next_post_time()
+                stats = get_content_stats()
+                
+                # Вычисляем сколько до следующего поста
+                now = datetime.now()
+                if next_post > now:
+                    time_to_next = next_post - now
+                    minutes_to_next = int(time_to_next.total_seconds() / 60)
+                    seconds_to_next = int(time_to_next.total_seconds() % 60)
+                    time_str = f"{minutes_to_next}м {seconds_to_next}с"
+                else:
+                    time_str = "сейчас"
+                
+                # Следующий канал
+                next_channel_key = self.channels_list[self.current_channel_index] if self.channels_list else None
+                next_channel_name = CONFIG["channels"].get(next_channel_key, {}).get("name", next_channel_key) if next_channel_key else "Неизвестно"
+                
+                # Прогноз
+                posts_per_day = (24 * 60) // interval_minutes if interval_minutes > 0 else 0
+                days_left = stats['total_images'] / posts_per_day if posts_per_day > 0 and stats['total_images'] > 0 else 0
+                
                 for admin_id in admin_ids:
                     await bot_instance.send_message(
                         chat_id=admin_id,
                         text=f"🚀 Автопостинг запущен!\n\n"
                              f"⏱ Интервал: {interval_minutes} мин\n"
-                             f"📺 Каналов: {len(self.channels_list)}\n"
-                             f"⏰ Следующий пост: {next_post.strftime('%H:%M:%S')}"
+                             f"📺 Активных каналов: {len(self.channels_list)}\n"
+                             f"📁 Доступно контента: {stats['total_images']} шт.\n"
+                             f"📊 Контента хватит на: {days_left:.1f} дней\n\n"
+                             f"⏰ Следующий пост: {next_post.strftime('%H:%M:%S')} (через {time_str})\n"
+                             f"➡️ Будет отправлен в: {next_channel_name}"
                     )
             except Exception as e:
                 logger.warning(f"Не удалось отправить уведомление о запуске: {e}")
@@ -966,9 +989,10 @@ async def cmd_help(update, context):
 
 @admin_only
 async def cmd_status(update, context):
-    """Команда /status"""
+    """Команда /status - расширенная информация о состоянии бота"""
     global poster
     
+    now = datetime.now()
     status_lines = ["📊 *Статус бота*\n"]
     
     # Статус постинга
@@ -981,10 +1005,18 @@ async def cmd_status(update, context):
     schedule = CONFIG.get("schedule", {})
     interval = schedule.get("post_interval_minutes", 30)
     status_lines.append(f"⏱ Интервал: *{interval}* мин")
-    status_lines.append(f"📋 Режим: *1 пост → {interval} мин → следующий канал*")
+    
+    # Последний пост
+    if poster.last_post_time:
+        time_since = now - poster.last_post_time
+        minutes_since = int(time_since.total_seconds() / 60)
+        seconds_since = int(time_since.total_seconds() % 60)
+        status_lines.append(f"🕐 Последний пост: *{poster.last_post_time.strftime('%H:%M:%S')}*")
+        status_lines.append(f"   \\(был {minutes_since}м {seconds_since}с назад\\)")
+    else:
+        status_lines.append(f"🕐 Последний пост: *еще не было*")
     
     # Время до следующего поста
-    now = datetime.now()
     if poster.is_posting and poster.last_post_time:
         next_post_time = poster.last_post_time + timedelta(minutes=interval)
         
@@ -992,40 +1024,50 @@ async def cmd_status(update, context):
             time_remaining = next_post_time - now
             minutes = int(time_remaining.total_seconds() / 60)
             seconds = int(time_remaining.total_seconds() % 60)
-            status_lines.append(f"⏳ Следующий пост в: *{next_post_time.strftime('%H:%M:%S')}*")
-            status_lines.append(f"⏳ До следующего поста: *{minutes}м {seconds}с*")
+            status_lines.append(f"\n⏰ Следующий пост: *{next_post_time.strftime('%H:%M:%S')}*")
+            status_lines.append(f"⏳ Осталось: *{minutes}м {seconds}с*")
         else:
-            status_lines.append(f"⏳ До следующего поста: *скоро\\.\\.\\.*")
+            status_lines.append(f"\n⏰ Следующий пост: *скоро\\.\\.\\.*")
     elif poster.is_posting:
-        status_lines.append(f"⏳ До следующего поста: *ожидание первого поста\\.\\.\\.*")
-    
-    # Последний пост
-    if poster.last_post_time:
-        time_since = now - poster.last_post_time
-        minutes_since = int(time_since.total_seconds() / 60)
-        seconds_since = int(time_since.total_seconds() % 60)
-        status_lines.append(f"🕐 Последний пост: *{poster.last_post_time.strftime('%H:%M:%S')}* \\({minutes_since}м {seconds_since}с назад\\)")
-    
-    # Активные каналы
-    enabled = get_enabled_channels()
-    status_lines.append(f"\n📺 Активных каналов: *{len(enabled)}*")
+        status_lines.append(f"\n⏰ Следующий пост: *ожидание\\.\\.\\.*")
     
     # Следующий канал
     if poster.channels_list:
         next_channel = poster.channels_list[poster.current_channel_index]
         channel_name = CONFIG["channels"][next_channel].get("name", next_channel)
         safe_name = escape_markdown(channel_name)
-        status_lines.append(f"➡️ Следующий: *{safe_name}*")
+        status_lines.append(f"➡️ Следующий канал: *{safe_name}*")
     
     # Контент
     stats = get_content_stats()
-    status_lines.append(f"\n📁 Контента: *{stats['total_images']}* шт\\.")
+    status_lines.append(f"\n📁 Всего контента: *{stats['total_images']}* шт\\.")
     
     # Прогноз на сколько хватит
     if stats['total_images'] > 0:
-        posts_per_day = (24 * 60) // interval
+        posts_per_day = (24 * 60) // interval if interval > 0 else 0
         days_left = stats['total_images'] / posts_per_day if posts_per_day > 0 else 0
-        status_lines.append(f"📊 Контента хватит на: *{days_left:.1f}* дней")
+        hours_left = (stats['total_images'] * interval) / 60
+        
+        if days_left >= 1:
+            status_lines.append(f"📊 Контента хватит на: *{days_left:.1f}* дней \\(≈{hours_left:.0f}ч\\)")
+        else:
+            status_lines.append(f"📊 Контента хватит на: *{hours_left:.1f}* часов")
+        
+        status_lines.append(f"📈 Постов в день: *{posts_per_day}* шт\\.")
+    else:
+        status_lines.append(f"⚠️ *Контент закончился\\!*")
+    
+    # Активные каналы
+    enabled = get_enabled_channels()
+    status_lines.append(f"\n📺 Активных каналов: *{len(enabled)}*")
+    
+    # Краткая разбивка по каналам
+    if stats["channels"]:
+        status_lines.append(f"\n*По каналам:*")
+        for ch_key, ch_stats in sorted(stats["channels"].items(), key=lambda x: x[1]["total"], reverse=True):
+            ch_name = CONFIG["channels"].get(ch_key, {}).get("name", ch_key)
+            safe_ch_name = escape_markdown(ch_name)
+            status_lines.append(f"  • {safe_ch_name}: {ch_stats['total']} шт\\.")
     
     await update.message.reply_text("\n".join(status_lines), parse_mode="MarkdownV2")
 
