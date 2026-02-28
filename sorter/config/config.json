@@ -1,0 +1,173 @@
+{
+  "telegram": {
+    "bot_token": "7601569334:AAGGST1To37UzoIfw1z34X1wytqS71Z1nnA",
+    "admin_ids": [1980584772],
+    "general_channel_id": "-1002437105427"
+  },
+  "channels": {
+    "mpa_disney": {
+      "channel_id": "-1002444770130",
+      "name": "Universe Disney Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "princess_jasmin": {
+          "folder_name": "Princess Jasmin",
+          "hashtags": ["#Jasmin"],
+          "keywords": ["jasmin", "jasmine", "aladdin"]
+        },
+        "elsa": {
+          "folder_name": "Elsa Frozzen",
+          "hashtags": ["#Elsa"],
+          "keywords": ["elsa", "frozen", "frozzen"]
+        },
+        "anna": {
+          "folder_name": "Anna Frozzen",
+          "hashtags": ["#Anna"],
+          "keywords": ["anna", "frozen", "frozzen"]
+        },
+        "group": {
+          "folder_name": "Group",
+          "hashtags": ["#Group"],
+          "keywords": ["group", "групп"]
+        },
+        "alice": {
+          "folder_name": "Alice",
+          "hashtags": ["#Alice_in_Wonderland"],
+          "keywords": ["alice", "wonderland", "алиса"]
+        }
+      }
+    },
+    "harry_potter": {
+      "channel_id": "-1002504735486",
+      "name": "Universe Harry Potter Erotic Art +18",
+      "enabled": true,
+      "categories": {
+        "hermione": {
+          "folder_name": "Hermione Grander",
+          "hashtags": ["#Hermione_Granger"],
+          "keywords": ["hermione", "granger", "grander", "гермиона"]
+        },
+        "ginny": {
+          "folder_name": "Ginny_Weasley",
+          "hashtags": ["#Ginny_Weasley"],
+          "keywords": ["ginny", "weasley", "джинни"]
+        },
+        "luna": {
+          "folder_name": "Luna_Lovegood",
+          "hashtags": ["#Luna_Lovegood"],
+          "keywords": ["luna", "lovegood", "луна"]
+        }
+      }
+    },
+    "atla": {
+      "channel_id": "-1002583181711",
+      "name": "Universe The Avatar Legend of AANG Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "katara": {
+          "folder_name": "Katara",
+          "hashtags": ["#Katara"],
+          "keywords": ["katara", "катара"]
+        },
+        "azula": {
+          "folder_name": "Azula",
+          "hashtags": ["#Azula"],
+          "keywords": ["azula", "азула"]
+        },
+        "tai_le": {
+          "folder_name": "Tai Le",
+          "hashtags": ["#Tai_Le"],
+          "keywords": ["tai le", "tai_le", "тай ли"]
+        },
+        "mai": {
+          "folder_name": "Mai",
+          "hashtags": ["#Mai"],
+          "keywords": ["mai", "мэй"]
+        },
+        "yui": {
+          "folder_name": "Yui",
+          "hashtags": ["#Yui"],
+          "keywords": ["yui", "юи"]
+        },
+        "toph": {
+          "folder_name": "Toph",
+          "hashtags": ["#Toph"],
+          "keywords": ["toph", "тоф"]
+        },
+        "korra": {
+          "folder_name": "Korra",
+          "hashtags": ["#Korra"],
+          "keywords": ["korra", "корра"]
+        }
+      }
+    },
+    "naruto": {
+      "channel_id": "-1002156790012",
+      "name": "Universe Naruto Ero Art +18",
+      "enabled": true,
+      "categories": {
+        "sakura": {
+          "folder_name": "Sakura",
+          "hashtags": ["#Sakura"],
+          "keywords": ["sakura", "сакура"]
+        },
+        "hinata": {
+          "folder_name": "Hinata",
+          "hashtags": ["#Hinata"],
+          "keywords": ["hinata", "хината"]
+        },
+        "tsunade": {
+          "folder_name": "Tsunade",
+          "hashtags": ["#Tsunade"],
+          "keywords": ["tsunade", "цунаде"]
+        },
+        "hanabi": {
+          "folder_name": "Hanabi",
+          "hashtags": ["#Hanabi"],
+          "keywords": ["hanabi", "ханаби"]
+        },
+        "ino": {
+          "folder_name": "Ino",
+          "hashtags": ["#Ino"],
+          "keywords": ["ino", "ино"]
+        },
+        "tenten": {
+          "folder_name": "TenTen",
+          "hashtags": ["#TenTen"],
+          "keywords": ["tenten", "тентен"]
+        },
+        "temari": {
+          "folder_name": "Temari",
+          "hashtags": ["#Temari"],
+          "keywords": ["temari", "темари"]
+        },
+        "kushina": {
+          "folder_name": "Kushina",
+          "hashtags": ["#Kushina"],
+          "keywords": ["kushina", "кушина"]
+        }
+      }
+    }
+  },
+  "schedule": {
+    "timezone": "Europe/Moscow",
+    "post_interval_hours": 2,
+    "first_post_hour": 8,
+    "last_post_hour": 22,
+    "posts_per_day": 8
+  },
+  "paths": {
+    "inbox": "./inbox",
+    "storage": "./storage",
+    "posting": "./posting",
+    "archives": "./archives",
+    "plans": "./plans",
+    "logs": "./logs"
+  },
+  "settings": {
+    "supported_formats": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+    "max_file_size_mb": 10,
+    "sort_interval_minutes": 30,
+    "archive_after_days": 30
+  }
+}

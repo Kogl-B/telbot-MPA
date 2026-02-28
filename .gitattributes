@@ -1,0 +1,24 @@
+# Конец строк по умолчанию
+* text=auto
+
+# Shell-скрипты — всегда LF (для Linux-сервера)
+*.sh text eol=lf
+
+# Python — авто
+*.py text eol=auto
+
+# JSON — авто
+*.json text eol=auto
+
+# Markdown — авто
+*.md text eol=auto
+
+# Бинарные файлы
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.webp binary
+*.mp4 binary
+*.mov binary
+*.webm binary

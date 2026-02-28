@@ -1,0 +1,44 @@
+# Токен бота — НИКОГДА не в git
+bot_token.txt
+**/bot_token.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Виртуальное окружение
+.venv/
+venv/
+env/
+
+# Логи
+telbot/logs/
+sorter/logs/
+*.log
+
+# Контент (медиафайлы — не в git)
+telbot/content/
+sorter/inbox/
+sorter/storage/
+sorter/upload/
+
+# Состояние бота
+telbot/posting_state.json
+
+# Временные файлы
+telbot/temp/
+
+# Архивы
+telbot/archives/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
