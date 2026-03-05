@@ -23,6 +23,7 @@ import random
 import logging
 import argparse
 import re
+import asyncio
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -47,6 +48,16 @@ TOKEN_FILE = BASE_DIR / "bot_token.txt"
 STATE_FILE = BASE_DIR / "posting_state.json"
 
 SUPPORTED_FORMATS = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm", ".mov"]
+
+# Лимит Telegram на отправку фото (10 МБ)
+MAX_PHOTO_SIZE = 10 * 1024 * 1024  # 10485760 байт
+
+# Минимальный размер файла (для фильтрации мусора вроде macOS ._* файлов)
+MIN_FILE_SIZE = 1024  # 1 КБ
+
+# Настройки повторных попыток при таймаутах
+SEND_MAX_RETRIES = 3
+SEND_RETRY_BASE_DELAY = 5  # секунд (экспоненциальный бэкофф: 5, 10, 20)
 
 # Порог «мало контента» (по умолчанию, переопределяется в config)
 DEFAULT_LOW_CONTENT_THRESHOLD = 10
@@ -273,6 +284,54 @@ def escape_md(text: str) -> str:
         text = text.replace(ch, f"\\{ch}")
     return text
 
+
+def is_valid_media_file(path: Path) -> bool:
+    """
+    Проверяет, что файл является валидным медиафайлом:
+    - Не macOS resource fork (._*)
+    - Не скрытый файл (.*)
+    - Размер >= MIN_FILE_SIZE
+    - Расширение в списке поддерживаемых
+    """
+    name = path.name
+    # Пропуск macOS resource fork файлов и скрытых файлов
+    if name.startswith("._") or name.startswith("."):
+        return False
+    # Проверка расширения
+    if path.suffix.lower() not in get_supported_formats():
+        return False
+    # Проверка минимального размера
+    try:
+        if path.stat().st_size < MIN_FILE_SIZE:
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def cleanup_junk_files(directory: Path, dry_run: bool = False) -> int:
+    """
+    Удаляет мусорные файлы из директории (macOS ._*, слишком маленькие).
+    Возвращает количество удалённых файлов.
+    """
+    removed = 0
+    if not directory.exists():
+        return removed
+    for f in directory.rglob("*"):
+        if f.is_file() and f.suffix.lower() in get_supported_formats():
+            if not is_valid_media_file(f):
+                if dry_run:
+                    logger.info(f"🗑️ [dry-run] Мусорный файл: {f} ({f.stat().st_size} байт)")
+                else:
+                    try:
+                        f.unlink()
+                        logger.info(f"🗑️ Удалён мусорный файл: {f.name} ({f.stat().st_size} байт)")
+                        removed += 1
+                    except OSError as e:
+                        logger.warning(f"⚠️ Не удалось удалить {f.name}: {e}")
+    return removed
+
+
 # ============================================
 # СТАТИСТИКА КОНТЕНТА
 # ============================================
@@ -296,7 +355,7 @@ def get_content_stats() -> Dict:
             for cat_dir in ch_path.iterdir():
                 if not cat_dir.is_dir():
                     continue
-                count = sum(1 for f in cat_dir.iterdir() if f.suffix.lower() in fmt)
+                count = sum(1 for f in cat_dir.iterdir() if is_valid_media_file(f))
                 ch_stats["categories"][cat_dir.name] = (
                     ch_stats["categories"].get(cat_dir.name, 0) + count
                 )
@@ -707,34 +766,84 @@ class TelegramPoster:
                         hashtags = cat_cfg.get("hashtags", [])[:1]
                         break
                 for f in cat_dir.iterdir():
-                    if f.suffix.lower() in fmt:
+                    if is_valid_media_file(f):
                         images.append({
                             "path": f,
                             "category": cat_dir.name,
                             "hashtags": hashtags,
                         })
+                    elif f.is_file() and f.suffix.lower() in fmt:
+                        # Мусорный файл (macOS ._*, слишком маленький) — удаляем
+                        try:
+                            size = f.stat().st_size
+                            f.unlink()
+                            logger.info(f"🗑️ Удалён мусорный файл: {f.name} ({size} байт)")
+                        except OSError:
+                            pass
         return random.choice(images) if images else None
 
     # --- Публикация ---
 
     async def send_file(self, bot, channel_id: str, file_path: Path,
                         caption: str = "") -> bool:
-        try:
-            ext = file_path.suffix.lower()
-            with open(file_path, "rb") as f:
-                if ext == ".gif":
-                    await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
-                elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
-                    await bot.send_video(chat_id=channel_id, video=f, caption=caption)
+        """
+        Отправляет файл в Telegram с повторными попытками при таймаутах.
+        Для фото >10МБ автоматически отправляет как документ.
+        """
+        ext = file_path.suffix.lower()
+        file_size = file_path.stat().st_size
+
+        for attempt in range(1, SEND_MAX_RETRIES + 1):
+            try:
+                with open(file_path, "rb") as f:
+                    if ext == ".gif":
+                        await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
+                    elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
+                        await bot.send_video(chat_id=channel_id, video=f, caption=caption)
+                    elif file_size > MAX_PHOTO_SIZE:
+                        # Фото слишком большое — отправляем как документ
+                        logger.info(
+                            f"📂 Файл {file_path.name} ({file_size} байт) > 10МБ, "
+                            f"отправка как документ"
+                        )
+                        await bot.send_document(chat_id=channel_id, document=f, caption=caption)
+                    else:
+                        await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
+
+                logger.info(f"📤 Отправлено в {channel_id}: {file_path.name}")
+                self._last_send_error = None
+                return True
+
+            except Exception as e:
+                err_str = str(e).lower()
+                is_timeout = ("timed out" in err_str or "timeout" in err_str
+                              or "connect" in err_str)
+
+                if is_timeout and attempt < SEND_MAX_RETRIES:
+                    delay = SEND_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"⏳ Таймаут при отправке {file_path.name} "
+                        f"(попытка {attempt}/{SEND_MAX_RETRIES}), "
+                        f"повтор через {delay} сек..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Не таймаут или исчерпаны попытки
+                self._last_send_error = str(e)
+                if attempt > 1:
+                    logger.error(
+                        f"❌ Ошибка отправки {file_path.name} после "
+                        f"{attempt} попыток: {e}"
+                    )
                 else:
-                    await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
-            logger.info(f"📤 Отправлено в {channel_id}: {file_path.name}")
-            self._last_send_error = None
-            return True
-        except Exception as e:
-            self._last_send_error = str(e)
-            logger.error(f"❌ Ошибка отправки {file_path.name}: {e}\n{traceback.format_exc()}")
-            return False
+                    logger.error(
+                        f"❌ Ошибка отправки {file_path.name}: {e}\n"
+                        f"{traceback.format_exc()}"
+                    )
+                return False
+
+        return False  # не должно сюда дойти, но на всякий случай
 
     async def post_and_delete(self, bot, channel_key: str) -> Dict:
         """
@@ -888,7 +997,7 @@ class TelegramPoster:
                         for cat_dir in ch_path.iterdir():
                             if cat_dir.is_dir():
                                 cnt = sum(1 for f in cat_dir.iterdir()
-                                          if f.suffix.lower() in get_supported_formats())
+                                          if is_valid_media_file(f))
                                 if cnt > 0:
                                     folder_info.append(f"  {month_dir.name}/{cat_dir.name}: {cnt}")
                                 file_count += cnt
@@ -903,10 +1012,14 @@ class TelegramPoster:
                     api_hint = "🔧 Бот исключён из канала — добавьте его обратно как администратора"
                 elif "forbidden" in err_lower:
                     api_hint = "🔧 Нет прав на публикацию — проверьте права бота в канале"
+                elif "image_process_failed" in err_lower:
+                    api_hint = "🔧 Telegram не смог обработать изображение — файл повреждён или не является картинкой"
                 elif "wrong file identifier" in err_lower or "invalid" in err_lower:
                     api_hint = "🔧 Файл повреждён или неподдерживаемый формат"
                 elif "too large" in err_lower or "file is too big" in err_lower:
                     api_hint = "🔧 Файл слишком большой для Telegram (лимит: фото 10 МБ, видео 50 МБ)"
+                elif "timed out" in err_lower or "timeout" in err_lower or "connect" in err_lower:
+                    api_hint = "🔧 Таймаут соединения — проверьте интернет на сервере"
                 elif "flood" in err_lower or "too many requests" in err_lower:
                     api_hint = "🔧 Превышен лимит запросов — бот временно заблокирован Telegram"
 

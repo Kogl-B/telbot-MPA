@@ -91,6 +91,30 @@ SUPPORTED_FORMATS = (
     [".jpg", ".jpeg", ".png", ".gif", ".webp"]
 )
 
+# Минимальный размер файла (фильтрация macOS ._* и прочего мусора)
+MIN_FILE_SIZE = 1024  # 1 КБ
+
+
+def is_valid_media_file(path: Path) -> bool:
+    """
+    Проверяет, что файл является валидным медиафайлом:
+    - Не macOS resource fork (._*)
+    - Не скрытый файл (.*)
+    - Размер >= MIN_FILE_SIZE
+    - Расширение в списке поддерживаемых
+    """
+    name = path.name
+    if name.startswith("._") or name.startswith("."):
+        return False
+    if path.suffix.lower() not in SUPPORTED_FORMATS:
+        return False
+    try:
+        if path.stat().st_size < MIN_FILE_SIZE:
+            return False
+    except OSError:
+        return False
+    return True
+
 
 # ============================================
 # КЛАСС СОРТИРОВЩИКА
@@ -140,8 +164,16 @@ class ImageSorter:
         for root, _, files in os.walk(folder):
             for f in files:
                 path = Path(root) / f
-                if path.suffix.lower() in SUPPORTED_FORMATS:
+                if is_valid_media_file(path):
                     images.append(path)
+                elif path.suffix.lower() in SUPPORTED_FORMATS:
+                    # Мусорный файл (macOS ._*, слишком маленький) — удаляем
+                    try:
+                        size = path.stat().st_size
+                        path.unlink()
+                        logger.info(f"🗑️ Удалён мусорный файл: {path.name} ({size} байт)")
+                    except OSError:
+                        pass
         return images
     
     def sort_all(self) -> Dict[str, Any]:
@@ -335,7 +367,7 @@ class PackageBuilder:
         for cat_path in channel_path.iterdir():
             if cat_path.is_dir():
                 images = [f for f in cat_path.iterdir() 
-                         if f.is_file() and f.suffix.lower() in SUPPORTED_FORMATS]
+                         if f.is_file() and is_valid_media_file(f)]
                 if images:
                     result[cat_path.name] = images
         
