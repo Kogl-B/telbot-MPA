@@ -56,8 +56,8 @@ MAX_PHOTO_SIZE = 10 * 1024 * 1024  # 10485760 байт
 MIN_FILE_SIZE = 1024  # 1 КБ
 
 # Настройки повторных попыток при таймаутах
-SEND_MAX_RETRIES = 3
-SEND_RETRY_BASE_DELAY = 5  # секунд (экспоненциальный бэкофф: 5, 10, 20)
+SEND_MAX_RETRIES = 5
+SEND_RETRY_BASE_DELAY = 10  # секунд (экспоненциальный бэкофф: 10, 20, 40, 80)
 
 # Порог «мало контента» (по умолчанию, переопределяется в config)
 DEFAULT_LOW_CONTENT_THRESHOLD = 10
@@ -213,7 +213,7 @@ def admin_only(func):
     """Декоратор: только для администраторов"""
     @wraps(func)
     async def wrapper(update, context, *args, **kwargs):
-        uid = update.effective_user.id
+        uid = update.effective_user.id if update.effective_user else None
         if not _is_admin(uid):
             logger.warning(
                 f"⛔ Отказ в доступе (admin_only): "
@@ -229,7 +229,7 @@ def user_only(func):
     """Декоратор: для админов и обычных пользователей"""
     @wraps(func)
     async def wrapper(update, context, *args, **kwargs):
-        uid = update.effective_user.id
+        uid = update.effective_user.id if update.effective_user else None
         if not _is_known_user(uid):
             logger.warning(
                 f"⛔ Отказ в доступе (user_only): "
@@ -1096,7 +1096,7 @@ class TelegramPoster:
 
 @user_only
 async def cmd_start(update, context):
-    uid = update.effective_user.id
+    uid = update.effective_user.id if update.effective_user else None
     role = "👑 Администратор" if _is_admin(uid) else "👤 Пользователь"
     await update.message.reply_text(
         f"👋 *TelBot 2.0* — бот автопостинга\n\n"
@@ -1108,7 +1108,7 @@ async def cmd_start(update, context):
 
 @user_only
 async def cmd_help(update, context):
-    uid = update.effective_user.id
+    uid = update.effective_user.id if update.effective_user else None
     base = (
         "📖 *Справка TelBot 2.0*\n\n"
         "*Общие команды:*\n"
@@ -1304,7 +1304,7 @@ async def cmd_reload(update, context):
             lines.append(f"\n➖ Убраны: {', '.join(removed)}")
 
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-        logger.info(f"🔄 Конфиг перезагружен по команде от {update.effective_user.id}")
+        logger.info(f"🔄 Конфиг перезагружен по команде от {update.effective_user.id if update.effective_user else 'Unknown'}")
     except Exception as e:
         logger.error(f"❌ Ошибка перезагрузки конфига: {e}\n{traceback.format_exc()}")
         await update.message.reply_text(f"❌ Ошибка перезагрузки:\n`{str(e)[:300]}`", parse_mode="Markdown")
@@ -1393,6 +1393,7 @@ def main():
 
     try:
         from telegram.ext import Application, CommandHandler, MessageHandler, filters
+        from telegram.request import HTTPXRequest
     except ImportError:
         logger.error("❌ pip install 'python-telegram-bot[job-queue]'")
         sys.exit(1)
@@ -1401,7 +1402,14 @@ def main():
     logger.info(f"👑 Админы: {ADMIN_IDS}")
     logger.info(f"👤 Пользователи: {USER_IDS}")
 
-    app = Application.builder().token(token).build()
+    # Увеличенные таймауты для нестабильного соединения
+    _request = HTTPXRequest(
+        connect_timeout=20,
+        read_timeout=60,
+        write_timeout=60,
+        pool_timeout=30,
+    )
+    app = Application.builder().token(token).request(_request).build()
 
     # --- Poster и Uploader ---
     poster = TelegramPoster()
