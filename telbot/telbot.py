@@ -216,8 +216,15 @@ def _is_known_user(user_id: int) -> bool:
     return user_id in ADMIN_IDS or user_id in USER_IDS
 
 
+# Параметры retry для команд бота (отдельно от файловых операций)
+CMD_RETRY_COUNT = 3
+CMD_RETRY_DELAY = 3  # секунд
+
+
 def admin_only(func):
-    """Декоратор: только для администраторов"""
+    """Декоратор: только для администраторов. Повторяет при TimedOut/NetworkError."""
+    from telegram.error import TimedOut as TgTimedOut, NetworkError as TgNetworkError
+
     @wraps(func)
     async def wrapper(update, context, *args, **kwargs):
         uid = update.effective_user.id if update.effective_user else None
@@ -228,12 +235,28 @@ def admin_only(func):
             )
             await update.message.reply_text("⛔ Доступ запрещён. Требуются права администратора.")
             return
-        return await func(update, context, *args, **kwargs)
+        for attempt in range(1, CMD_RETRY_COUNT + 1):
+            try:
+                return await func(update, context, *args, **kwargs)
+            except (TgTimedOut, TgNetworkError) as e:
+                if attempt < CMD_RETRY_COUNT:
+                    logger.warning(
+                        f"⏳ Таймаут в {func.__name__} "
+                        f"(попытка {attempt}/{CMD_RETRY_COUNT}), "
+                        f"повтор через {CMD_RETRY_DELAY} сек..."
+                    )
+                    await asyncio.sleep(CMD_RETRY_DELAY)
+                else:
+                    logger.error(
+                        f"❌ {func.__name__} не доставлен после {CMD_RETRY_COUNT} попыток: {e}"
+                    )
     return wrapper
 
 
 def user_only(func):
-    """Декоратор: для админов и обычных пользователей"""
+    """Декоратор: для админов и обычных пользователей. Повторяет при TimedOut/NetworkError."""
+    from telegram.error import TimedOut as TgTimedOut, NetworkError as TgNetworkError
+
     @wraps(func)
     async def wrapper(update, context, *args, **kwargs):
         uid = update.effective_user.id if update.effective_user else None
@@ -244,7 +267,21 @@ def user_only(func):
             )
             await update.message.reply_text("⛔ Доступ запрещён. Обратитесь к администратору.")
             return
-        return await func(update, context, *args, **kwargs)
+        for attempt in range(1, CMD_RETRY_COUNT + 1):
+            try:
+                return await func(update, context, *args, **kwargs)
+            except (TgTimedOut, TgNetworkError) as e:
+                if attempt < CMD_RETRY_COUNT:
+                    logger.warning(
+                        f"⏳ Таймаут в {func.__name__} "
+                        f"(попытка {attempt}/{CMD_RETRY_COUNT}), "
+                        f"повтор через {CMD_RETRY_DELAY} сек..."
+                    )
+                    await asyncio.sleep(CMD_RETRY_DELAY)
+                else:
+                    logger.error(
+                        f"❌ {func.__name__} не доставлен после {CMD_RETRY_COUNT} попыток: {e}"
+                    )
     return wrapper
 
 # ============================================
@@ -1327,23 +1364,11 @@ async def cmd_status(update, context):
 
 @user_only
 async def cmd_stats(update, context):
-    from telegram.error import TimedOut as TgTimedOut, NetworkError as TgNetworkError
     args = context.args
     channel_filter = args[0] if args else None
-    text = format_stats_message(channel_filter)
-    for attempt in range(1, SEND_MAX_RETRIES + 1):
-        try:
-            await update.message.reply_text(text, parse_mode="Markdown")
-            return
-        except (TgTimedOut, TgNetworkError) as e:
-            if attempt < SEND_MAX_RETRIES:
-                logger.warning(
-                    f"⏳ Таймаут при отправке /stats "
-                    f"(попытка {attempt}/{SEND_MAX_RETRIES}), повтор через {SEND_RETRY_DELAY} сек..."
-                )
-                await asyncio.sleep(SEND_RETRY_DELAY)
-            else:
-                logger.error(f"❌ /stats не доставлен после {attempt} попыток: {e}")
+    await update.message.reply_text(
+        format_stats_message(channel_filter), parse_mode="Markdown"
+    )
 
 
 @user_only
