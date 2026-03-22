@@ -857,7 +857,7 @@ class TelegramPoster:
 
                 # Уменьшаем качество JPEG
                 quality = 90
-                while quality >= 30:
+                while quality >= 20:
                     img.save(temp_file, "JPEG", quality=quality, optimize=True)
                     new_size = temp_file.stat().st_size
                     if new_size <= MAX_PHOTO_SIZE:
@@ -869,12 +869,12 @@ class TelegramPoster:
                     quality -= 10
 
                 # Если качество не помогло — уменьшаем разрешение
-                scale = 0.8
-                while scale >= 0.3:
+                scale = 0.9
+                while scale >= 0.1:
                     new_w = int(img.width * scale)
                     new_h = int(img.height * scale)
                     resized = img.resize((new_w, new_h), Image.LANCZOS)
-                    resized.save(temp_file, "JPEG", quality=80, optimize=True)
+                    resized.save(temp_file, "JPEG", quality=75, optimize=True)
                     new_size = temp_file.stat().st_size
                     if new_size <= MAX_PHOTO_SIZE:
                         logger.info(
@@ -963,7 +963,9 @@ class TelegramPoster:
                                   or "connect" in err_str)
                     is_bad_image = ("image_process_failed" in err_str
                                     or "wrong file type" in err_str
-                                    or "invalid image" in err_str)
+                                    or "invalid image" in err_str
+                                    or "too big for a photo" in err_str
+                                    or "request entity too large" in err_str)
 
                     if is_bad_image:
                         # Повреждённое изображение — пробуем как документ
