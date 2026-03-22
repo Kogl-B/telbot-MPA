@@ -25,11 +25,18 @@ import argparse
 import re
 import asyncio
 import traceback
+import shutil
 from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from functools import wraps
+
+try:
+    from PIL import Image
+    HAS_PILLOW = True
+except ImportError:
+    HAS_PILLOW = False
 
 # ============================================
 # ПУТИ И КОНСТАНТЫ
@@ -57,7 +64,7 @@ MIN_FILE_SIZE = 1024  # 1 КБ
 
 # Настройки повторных попыток при таймаутах
 SEND_MAX_RETRIES = 5
-SEND_RETRY_BASE_DELAY = 10  # секунд (экспоненциальный бэкофф: 10, 20, 40, 80)
+SEND_RETRY_DELAY = 60  # секунд (фиксированный интервал между попытками)
 
 # Порог «мало контента» (по умолчанию, переопределяется в config)
 DEFAULT_LOW_CONTENT_THRESHOLD = 10
@@ -784,66 +791,160 @@ class TelegramPoster:
 
     # --- Публикация ---
 
+    def _compress_image(self, file_path: Path) -> Optional[Path]:
+        """
+        Сжимает изображение до размера < MAX_PHOTO_SIZE.
+        Возвращает путь к сжатому файлу во временной папке или None при ошибке.
+        """
+        if not HAS_PILLOW:
+            logger.warning("⚠️ Pillow не установлен — сжатие невозможно. pip install Pillow")
+            return None
+
+        try:
+            temp_dir = PATHS["temp"]
+            temp_file = temp_dir / f"compressed_{file_path.name}"
+            # Убеждаемся что выходной формат JPEG (лучшее сжатие)
+            if temp_file.suffix.lower() == ".png":
+                temp_file = temp_file.with_suffix(".jpg")
+
+            with Image.open(file_path) as img:
+                # Конвертируем RGBA → RGB для JPEG
+                if img.mode in ("RGBA", "P", "LA"):
+                    img = img.convert("RGB")
+
+                original_size = file_path.stat().st_size
+                logger.info(
+                    f"🗜️ Сжатие {file_path.name}: {original_size} байт, "
+                    f"разрешение {img.width}x{img.height}"
+                )
+
+                # Уменьшаем качество JPEG
+                quality = 90
+                while quality >= 30:
+                    img.save(temp_file, "JPEG", quality=quality, optimize=True)
+                    new_size = temp_file.stat().st_size
+                    if new_size <= MAX_PHOTO_SIZE:
+                        logger.info(
+                            f"✅ Сжато: {original_size} → {new_size} байт "
+                            f"(quality={quality})"
+                        )
+                        return temp_file
+                    quality -= 10
+
+                # Если качество не помогло — уменьшаем разрешение
+                scale = 0.8
+                while scale >= 0.3:
+                    new_w = int(img.width * scale)
+                    new_h = int(img.height * scale)
+                    resized = img.resize((new_w, new_h), Image.LANCZOS)
+                    resized.save(temp_file, "JPEG", quality=80, optimize=True)
+                    new_size = temp_file.stat().st_size
+                    if new_size <= MAX_PHOTO_SIZE:
+                        logger.info(
+                            f"✅ Сжато с ресайзом: {original_size} → {new_size} байт "
+                            f"({new_w}x{new_h})"
+                        )
+                        return temp_file
+                    scale -= 0.1
+
+                logger.error(f"❌ Не удалось сжать {file_path.name} до {MAX_PHOTO_SIZE} байт")
+                if temp_file.exists():
+                    temp_file.unlink()
+                return None
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка сжатия {file_path.name}: {e}")
+            return None
+
     async def send_file(self, bot, channel_id: str, file_path: Path,
                         caption: str = "") -> bool:
         """
         Отправляет файл в Telegram с повторными попытками при таймаутах.
-        Для фото >10МБ автоматически отправляет как документ.
+        Для фото >10МБ сжимает изображение перед отправкой.
         """
         ext = file_path.suffix.lower()
         file_size = file_path.stat().st_size
+        compressed_path = None
 
-        for attempt in range(1, SEND_MAX_RETRIES + 1):
-            try:
-                with open(file_path, "rb") as f:
-                    if ext == ".gif":
-                        await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
-                    elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
-                        await bot.send_video(chat_id=channel_id, video=f, caption=caption)
-                    elif file_size > MAX_PHOTO_SIZE:
-                        # Фото слишком большое — отправляем как документ
-                        logger.info(
-                            f"📂 Файл {file_path.name} ({file_size} байт) > 10МБ, "
-                            f"отправка как документ"
-                        )
-                        await bot.send_document(chat_id=channel_id, document=f, caption=caption)
-                    else:
-                        await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
-
-                logger.info(f"📤 Отправлено в {channel_id}: {file_path.name}")
-                self._last_send_error = None
-                return True
-
-            except Exception as e:
-                err_str = str(e).lower()
-                is_timeout = ("timed out" in err_str or "timeout" in err_str
-                              or "connect" in err_str)
-
-                if is_timeout and attempt < SEND_MAX_RETRIES:
-                    delay = SEND_RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"⏳ Таймаут при отправке {file_path.name} "
-                        f"(попытка {attempt}/{SEND_MAX_RETRIES}), "
-                        f"повтор через {delay} сек..."
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                # Не таймаут или исчерпаны попытки
-                self._last_send_error = str(e)
-                if attempt > 1:
-                    logger.error(
-                        f"❌ Ошибка отправки {file_path.name} после "
-                        f"{attempt} попыток: {e}"
-                    )
+        try:
+            # Сжатие больших изображений
+            if ext in (".jpg", ".jpeg", ".png", ".webp") and file_size > MAX_PHOTO_SIZE:
+                logger.info(
+                    f"📐 Файл {file_path.name} ({file_size} байт) превышает лимит "
+                    f"{MAX_PHOTO_SIZE} байт, попытка сжатия..."
+                )
+                compressed_path = self._compress_image(file_path)
+                if compressed_path:
+                    send_path = compressed_path
+                    ext = compressed_path.suffix.lower()
+                    file_size = compressed_path.stat().st_size
                 else:
-                    logger.error(
-                        f"❌ Ошибка отправки {file_path.name}: {e}\n"
-                        f"{traceback.format_exc()}"
+                    # Сжатие не удалось — отправляем как документ
+                    logger.warning(
+                        f"⚠️ Сжатие не удалось, отправка {file_path.name} как документ"
                     )
-                return False
+                    send_path = file_path
+            else:
+                send_path = file_path
 
-        return False  # не должно сюда дойти, но на всякий случай
+            for attempt in range(1, SEND_MAX_RETRIES + 1):
+                try:
+                    with open(send_path, "rb") as f:
+                        if ext == ".gif":
+                            await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
+                        elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
+                            await bot.send_video(chat_id=channel_id, video=f, caption=caption)
+                        elif file_size > MAX_PHOTO_SIZE:
+                            # Фото не удалось сжать — отправляем как документ
+                            logger.info(
+                                f"📂 Файл {file_path.name} ({file_size} байт) > 10МБ, "
+                                f"отправка как документ"
+                            )
+                            await bot.send_document(chat_id=channel_id, document=f, caption=caption)
+                        else:
+                            await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
+
+                    logger.info(f"📤 Отправлено в {channel_id}: {file_path.name}")
+                    self._last_send_error = None
+                    return True
+
+                except Exception as e:
+                    err_str = str(e).lower()
+                    is_timeout = ("timed out" in err_str or "timeout" in err_str
+                                  or "connect" in err_str)
+
+                    if is_timeout and attempt < SEND_MAX_RETRIES:
+                        logger.warning(
+                            f"⏳ Таймаут при отправке {file_path.name} "
+                            f"(попытка {attempt}/{SEND_MAX_RETRIES}), "
+                            f"повтор через {SEND_RETRY_DELAY} сек..."
+                        )
+                        await asyncio.sleep(SEND_RETRY_DELAY)
+                        continue
+
+                    # Не таймаут или исчерпаны попытки
+                    self._last_send_error = str(e)
+                    if is_timeout:
+                        logger.error(
+                            f"❌ Ошибка отправки {file_path.name} после "
+                            f"{attempt} попыток: {e}"
+                        )
+                    else:
+                        logger.error(
+                            f"❌ Ошибка отправки {file_path.name}: {e}\n"
+                            f"{traceback.format_exc()}"
+                        )
+                    return False
+
+            return False  # не должно сюда дойти, но на всякий случай
+
+        finally:
+            # Удаляем временный сжатый файл
+            if compressed_path and compressed_path.exists():
+                try:
+                    compressed_path.unlink()
+                except OSError:
+                    pass
 
     async def post_and_delete(self, bot, channel_key: str) -> Dict:
         """
