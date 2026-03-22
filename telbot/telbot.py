@@ -1286,11 +1286,11 @@ async def cmd_start(update, context):
     uid = update.effective_user.id if update.effective_user else None
     role = "👑 Администратор" if _is_admin(uid) else "👤 Пользователь"
     await update.message.reply_text(
-        f"👋 *TelBot 2\.0* — бот автопостинга\n"
+        f"👋 *TelBot 2.0* — бот автопостинга\n"
         f"Версия: `{BOT_VERSION}`\n\n"
         f"Ваша роль: {role}\n"
-        f"Используйте /help для списка команд\.",
-        parse_mode="MarkdownV2",
+        f"Используйте /help для списка команд.",
+        parse_mode="Markdown",
     )
 
 
