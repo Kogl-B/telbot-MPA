@@ -1327,11 +1327,23 @@ async def cmd_status(update, context):
 
 @user_only
 async def cmd_stats(update, context):
+    from telegram.error import TimedOut as TgTimedOut, NetworkError as TgNetworkError
     args = context.args
     channel_filter = args[0] if args else None
-    await update.message.reply_text(
-        format_stats_message(channel_filter), parse_mode="Markdown"
-    )
+    text = format_stats_message(channel_filter)
+    for attempt in range(1, SEND_MAX_RETRIES + 1):
+        try:
+            await update.message.reply_text(text, parse_mode="Markdown")
+            return
+        except (TgTimedOut, TgNetworkError) as e:
+            if attempt < SEND_MAX_RETRIES:
+                logger.warning(
+                    f"⏳ Таймаут при отправке /stats "
+                    f"(попытка {attempt}/{SEND_MAX_RETRIES}), повтор через {SEND_RETRY_DELAY} сек..."
+                )
+                await asyncio.sleep(SEND_RETRY_DELAY)
+            else:
+                logger.error(f"❌ /stats не доставлен после {attempt} попыток: {e}")
 
 
 @user_only
@@ -1472,6 +1484,16 @@ async def cmd_test(update, context):
 
 async def error_handler(update, context):
     """Логирует необработанные ошибки с полным traceback и шлёт лог админам."""
+    from telegram.error import TimedOut as TgTimedOut, NetworkError as TgNetworkError
+
+    # Таймауты и сетевые сбои — просто предупреждение, без спама администратору
+    if isinstance(context.error, (TgTimedOut, TgNetworkError)):
+        logger.warning(
+            f"⏳ Сетевая ошибка (проигнорирована): {context.error}\n"
+            f"Update: {update}"
+        )
+        return
+
     tb_text = "".join(
         traceback.format_exception(
             type(context.error), context.error, context.error.__traceback__
