@@ -866,6 +866,18 @@ class TelegramPoster:
         file_size = file_path.stat().st_size
         compressed_path = None
 
+        # Защита от повреждённых/неполных файлов
+        if file_size < MIN_FILE_SIZE:
+            logger.warning(
+                f"🗑️ Файл {file_path.name} слишком мал ({file_size} байт < {MIN_FILE_SIZE}), "
+                f"удаление и пропуск"
+            )
+            try:
+                file_path.unlink()
+            except OSError:
+                pass
+            return False
+
         try:
             # Сжатие больших изображений
             if ext in (".jpg", ".jpeg", ".png", ".webp") and file_size > MAX_PHOTO_SIZE:
@@ -912,6 +924,38 @@ class TelegramPoster:
                     err_str = str(e).lower()
                     is_timeout = ("timed out" in err_str or "timeout" in err_str
                                   or "connect" in err_str)
+                    is_bad_image = ("image_process_failed" in err_str
+                                    or "wrong file type" in err_str
+                                    or "invalid image" in err_str)
+
+                    if is_bad_image:
+                        # Повреждённое изображение — пробуем как документ
+                        logger.warning(
+                            f"⚠️ Telegram не смог обработать {file_path.name} как фото "
+                            f"({e}), попытка отправки как документ..."
+                        )
+                        try:
+                            with open(send_path, "rb") as f:
+                                await bot.send_document(
+                                    chat_id=channel_id, document=f, caption=caption
+                                )
+                            logger.info(
+                                f"📤 Отправлено как документ в {channel_id}: {file_path.name}"
+                            )
+                            self._last_send_error = None
+                            return True
+                        except Exception as doc_e:
+                            logger.error(
+                                f"❌ Не удалось отправить {file_path.name} как документ: {doc_e}\n"
+                                f"Удаление повреждённого файла"
+                            )
+                            try:
+                                file_path.unlink()
+                                logger.info(f"🗑️ Удалён повреждённый файл: {file_path.name}")
+                            except OSError:
+                                pass
+                            self._last_send_error = str(e)
+                            return False
 
                     if is_timeout and attempt < SEND_MAX_RETRIES:
                         logger.warning(
