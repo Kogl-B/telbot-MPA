@@ -62,6 +62,9 @@ MAX_PHOTO_SIZE = 10 * 1024 * 1024  # 10485760 байт
 # Минимальный размер файла (для фильтрации мусора вроде macOS ._* файлов)
 MIN_FILE_SIZE = 1024  # 1 КБ
 
+# Версия бота
+BOT_VERSION = "1.0.1"
+
 # Настройки повторных попыток при таймаутах
 SEND_MAX_RETRIES = 5
 SEND_RETRY_DELAY = 60  # секунд (фиксированный интервал между попытками)
@@ -1283,10 +1286,11 @@ async def cmd_start(update, context):
     uid = update.effective_user.id if update.effective_user else None
     role = "👑 Администратор" if _is_admin(uid) else "👤 Пользователь"
     await update.message.reply_text(
-        f"👋 *TelBot 2.0* — бот автопостинга\n\n"
+        f"👋 *TelBot 2\.0* — бот автопостинга\n"
+        f"Версия: `{BOT_VERSION}`\n\n"
         f"Ваша роль: {role}\n"
-        f"Используйте /help для списка команд.",
-        parse_mode="Markdown",
+        f"Используйте /help для списка команд\.",
+        parse_mode="MarkdownV2",
     )
 
 
