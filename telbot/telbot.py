@@ -67,7 +67,12 @@ BOT_VERSION = "1.0.1"
 
 # Настройки повторных попыток при таймаутах
 SEND_MAX_RETRIES = 5
-SEND_RETRY_DELAY = 60  # секунд (фиксированный интервал между попытками)
+SEND_RETRY_DELAY = 15  # секунд между попытками (было 60)
+
+# Таймауты для вызовов API отправки медиа (переопределяют глобальные)
+_SEND_WRITE_TIMEOUT  = 300   # 5 минут — для медленных/нестабильных соединений
+_SEND_READ_TIMEOUT   = 120   # 2 минуты — ждём ответ от Telegram
+_SEND_CONNECT_TIMEOUT = 30   # 30 с   — установка соединения
 
 # Порог «мало контента» (по умолчанию, переопределяется в config)
 DEFAULT_LOW_CONTENT_THRESHOLD = 10
@@ -939,22 +944,33 @@ class TelegramPoster:
             else:
                 send_path = file_path
 
+            # Читаем файл в память до вызова API, чтобы файловый дескриптор
+            # был закрыт ещё до асинхронной отправки — это гарантирует, что
+            # unlink() после успешной отправки не встретит "занятый" файл.
+            with open(send_path, "rb") as f:
+                file_bytes = f.read()
+
+            _tk = dict(
+                write_timeout=_SEND_WRITE_TIMEOUT,
+                read_timeout=_SEND_READ_TIMEOUT,
+                connect_timeout=_SEND_CONNECT_TIMEOUT,
+            )
+
             for attempt in range(1, SEND_MAX_RETRIES + 1):
                 try:
-                    with open(send_path, "rb") as f:
-                        if ext == ".gif":
-                            await bot.send_animation(chat_id=channel_id, animation=f, caption=caption)
-                        elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
-                            await bot.send_video(chat_id=channel_id, video=f, caption=caption)
-                        elif file_size > MAX_PHOTO_SIZE:
-                            # Фото не удалось сжать — отправляем как документ
-                            logger.info(
-                                f"📂 Файл {file_path.name} ({file_size} байт) > 10МБ, "
-                                f"отправка как документ"
-                            )
-                            await bot.send_document(chat_id=channel_id, document=f, caption=caption)
-                        else:
-                            await bot.send_photo(chat_id=channel_id, photo=f, caption=caption)
+                    if ext == ".gif":
+                        await bot.send_animation(chat_id=channel_id, animation=file_bytes, caption=caption, **_tk)
+                    elif ext in (".mp4", ".mov", ".avi", ".mkv", ".webm"):
+                        await bot.send_video(chat_id=channel_id, video=file_bytes, caption=caption, **_tk)
+                    elif file_size > MAX_PHOTO_SIZE:
+                        # Фото не удалось сжать — отправляем как документ
+                        logger.info(
+                            f"📂 Файл {file_path.name} ({file_size} байт) > 10МБ, "
+                            f"отправка как документ"
+                        )
+                        await bot.send_document(chat_id=channel_id, document=file_bytes, caption=caption, **_tk)
+                    else:
+                        await bot.send_photo(chat_id=channel_id, photo=file_bytes, caption=caption, **_tk)
 
                     logger.info(f"📤 Отправлено в {channel_id}: {file_path.name}")
                     self._last_send_error = None
@@ -977,10 +993,9 @@ class TelegramPoster:
                             f"({e}), попытка отправки как документ..."
                         )
                         try:
-                            with open(send_path, "rb") as f:
-                                await bot.send_document(
-                                    chat_id=channel_id, document=f, caption=caption
-                                )
+                            await bot.send_document(
+                                chat_id=channel_id, document=file_bytes, caption=caption, **_tk
+                            )
                             logger.info(
                                 f"📤 Отправлено как документ в {channel_id}: {file_path.name}"
                             )
@@ -1057,11 +1072,16 @@ class TelegramPoster:
         ok = await self.send_file(bot, ch_cfg["channel_id"], file_path, caption)
 
         if ok:
-            try:
-                file_path.unlink()
-                logger.info(f"🗑️ Удалён: {file_path.name}")
-            except Exception as e:
-                logger.error(f"❌ Ошибка удаления: {e}")
+            for _del_try in range(3):
+                try:
+                    file_path.unlink(missing_ok=True)
+                    logger.info(f"🗑️ Удалён: {file_path.name}")
+                    break
+                except Exception as e:
+                    if _del_try < 2:
+                        await asyncio.sleep(1)
+                    else:
+                        logger.error(f"❌ Ошибка удаления {file_path.name}: {e}")
             # Очистка пустых папок после удаления файла
             cleanup_empty_dirs()
             self.last_post_time = datetime.now()
@@ -1600,12 +1620,12 @@ def main():
     logger.info(f"👑 Админы: {ADMIN_IDS}")
     logger.info(f"👤 Пользователи: {USER_IDS}")
 
-    # Увеличенные таймауты для нестабильного соединения
+    # Глобальные таймауты (запасной уровень; медиа-методы переопределяют своими)
     _request = HTTPXRequest(
-        connect_timeout=20,
-        read_timeout=60,
-        write_timeout=60,
-        pool_timeout=30,
+        connect_timeout=30,
+        read_timeout=120,
+        write_timeout=300,
+        pool_timeout=60,
     )
     app = Application.builder().token(token).request(_request).build()
 
